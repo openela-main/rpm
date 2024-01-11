@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 22
+%global rel 25
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -93,12 +93,14 @@ Patch121: rpm-4.16.1.3-rpm2archive-nocompression.patch
 Patch122: rpm-4.16.1.3-Support-long-languages-names-for-QT.patch
 Patch123: rpm-4.14.3-rpm2archive-parse-popt-options.patch
 Patch124: rpm-4.14.3-rpm2archive-Don-t-print-usage.patch
+Patch125: rpm-4.16.1.3-IMA-without-xattr.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
 # Probably to be upstreamed in slightly different form
 Patch907: rpm-4.15.x-ldflags.patch
 Patch908: 0001-Give-warning-on-not-supported-hash-for-RSA-keys.patch
+Patch909: rpm-4.16.1.3-external-debugedit.patch
 
 # Not yet (all) upstream, debugedit DWARF5
 # https://code.wildebeest.org/git/user/mjw/rpm/log/?h=gcc-dwarf5-4.16.1.2
@@ -112,6 +114,7 @@ Patch916: 0006-debugedit-Handle-DWARF-5-debug_line-and-debug_line_s.patch
 # Downstream-only patches
 Patch1000: rpm-4.16.1.3-hashtab-use-after-free-fix.patch
 Patch1001: rpm-4.16.1.3-find_debuginfo_vendor_opts.patch
+Patch1002: 0001-Macroize-find-debuginfo-script-location.patch
 
 # Partially GPL/LGPL dual-licensed and some bits with BSD
 # SourceLicense: (GPLv2+ and LGPLv2+ with exceptions) and BSD
@@ -127,7 +130,7 @@ BuildRequires: libdb-devel
 %endif
 
 %if %{with check}
-BuildRequires: fakechroot gnupg2
+BuildRequires: fakechroot gnupg2 debugedit
 %endif
 
 # XXX generally assumed to be installed but make it explicit as rpm
@@ -244,6 +247,7 @@ Suggests: gdb-minimal
 # "just work" while allowing for alternatives, depend on a virtual
 # provide, typically coming from redhat-rpm-config.
 Requires: system-rpm-config
+Requires: debugedit
 
 %description build
 The rpm-build package contains the scripts and executable programs
@@ -414,6 +418,19 @@ popd
 pushd python
 %py3_install
 popd
+
+cat > $RPM_BUILD_ROOT/%{rpmhome}/debugedit << END
+#!/bin/sh
+/usr/bin/debugedit "\$@"
+END
+cat > $RPM_BUILD_ROOT/%{rpmhome}/sepdebugcrcfix << END
+#!/bin/sh
+/usr/bin/sepdebugcrcfix "\$@"
+END
+cat > $RPM_BUILD_ROOT/%{rpmhome}/find-debuginfo.sh << END
+#!/bin/sh
+/usr/bin/find-debuginfo.sh "\$@"
+END
 
 mkdir -p $RPM_BUILD_ROOT%{_unitdir}
 install -m 644 %{SOURCE10} $RPM_BUILD_ROOT/%{_unitdir}
@@ -626,6 +643,18 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+
+* Fri Jun 30 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-25
+- Followup on #2166383
+- Add compat scripts calling external find-debug, sepdebugcrcfix and debugedit
+- Add %%__find_debuginfo macro
+
+* Thu May 04 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-24
+- Use external find-debug and debugedit (#2166383)
+
+* Wed May 03 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-23
+- Don't error out on IMA signatures on files not supporting them
+  (#2157835, #2157836)
 
 * Mon Dec 19 2022 Florian Festi <ffesti@redhat.com> - 4.16.1.3-22
 - Fix option handling in rpm2archive for #2150804
