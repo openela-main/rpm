@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 25
+%global rel 27
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -94,6 +94,16 @@ Patch122: rpm-4.16.1.3-Support-long-languages-names-for-QT.patch
 Patch123: rpm-4.14.3-rpm2archive-parse-popt-options.patch
 Patch124: rpm-4.14.3-rpm2archive-Don-t-print-usage.patch
 Patch125: rpm-4.16.1.3-IMA-without-xattr.patch
+# Backport fsm to fix CVEs
+Patch126: 0001-Eliminate-code-duplication-from-rpmfiNext.patch
+Patch127: 0001-Add-optional-callback-on-directory-changes-during-rp.patch
+Patch128: 0001-Pass-file-descriptor-to-file-prepare-plugin-hook-use.patch
+Patch129: 0001-Swap-over-to-dirfd-basename-based-operation-within-t.patch
+Patch130: 0001-Use-file-state-machine-from-rpm-4.19.patch
+Patch131: 0001-Emit-full-paths-for-file-disposition-diagnostics-on-.patch
+Patch132: 0001-Fix-wrong-return-code-on-O_DIRECTORY-open-of-invalid.patch
+Patch133: 0001-Print-full-path-if-file-removal-fails.patch
+Patch134: 0001-Don-t-warn-about-missing-user-group-on-skipped-files.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
@@ -643,6 +653,10 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+
+* Mon Dec 11 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-27
+- Backport file handling code from rpm-4.19 to fix CVE-2021-35937,
+  CVE-2021-35938 and CVE-2021-35939
 
 * Fri Jun 30 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-25
 - Followup on #2166383
