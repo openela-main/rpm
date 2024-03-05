@@ -32,7 +32,7 @@
 
 %global rpmver 4.14.3
 #global snapver rc2
-%global rel 26
+%global rel 28
 
 %global srcver %{version}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:%{name}-%(echo %{version} | cut -d'.' -f1-2).x}
@@ -119,6 +119,16 @@ Patch165: rpm-4.16.1.3-rpm2archive-error-handling.patch
 Patch166: rpm-4.14.3-rpm2archive-nocompression.patch
 Patch167: rpm-4.14.3-rpm2archive-parse-popt-options.patch
 Patch168: rpm-4.14.3-rpm2archive-Don-t-print-usage.patch
+# Backport fsm to fix CVEs
+Patch169: 0001-Eliminate-code-duplication-from-rpmfiNext.patch
+Patch170: 0001-Add-optional-callback-on-directory-changes-during-rp.patch
+Patch171: 0001-Pass-file-descriptor-to-file-prepare-plugin-hook-use.patch
+Patch172: 0001-Swap-over-to-dirfd-basename-based-operation-within-t.patch
+Patch173: 0001-Use-file-state-machine-from-rpm-4.19.patch
+Patch174: 0001-Emit-full-paths-for-file-disposition-diagnostics-on-.patch
+Patch175: 0001-Fix-wrong-return-code-on-O_DIRECTORY-open-of-invalid.patch
+Patch176: 0001-Print-full-path-if-file-removal-fails.patch
+Patch177: 0001-Don-t-warn-about-missing-user-group-on-skipped-files.patch
 
 # Python 3 string API sanity
 Patch500: 0001-In-Python-3-return-all-our-string-data-as-surrogate-.patch
@@ -699,7 +709,11 @@ make check || cat tests/rpmtests.log
 %doc doc/librpm/html/*
 
 %changelog
-* Mon Dec 19 2022 Florian Festi <ffesti@redhat.com> - 4.14.4-26
+* Tue Dec 12 2023 Florian Festi <ffesti@redhat.com> - 4.14.3-28
+- Backport file handling code from rpm-4.19 to fix CVE-2021-35937,
+  CVE-2021-35938 and CVE-2021-35939
+
+* Mon Dec 19 2022 Florian Festi <ffesti@redhat.com> - 4.14.3-26
 - Add --nocompression to rpm2archive (#2129345)
 
 * Tue Sep 13 2022 Michal Domonkos <mdomonko@redhat.com> - 4.14.3-24
