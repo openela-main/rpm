@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 27
+%global rel 29
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -104,6 +104,10 @@ Patch131: 0001-Emit-full-paths-for-file-disposition-diagnostics-on-.patch
 Patch132: 0001-Fix-wrong-return-code-on-O_DIRECTORY-open-of-invalid.patch
 Patch133: 0001-Print-full-path-if-file-removal-fails.patch
 Patch134: 0001-Don-t-warn-about-missing-user-group-on-skipped-files.patch
+
+Patch140: 0001-Fix-short-circuiting-of-version-strings-in-expressio.patch
+Patch141: 0001-Fix-a-copy-paste-help-description-of-whatconflicts-R.patch
+Patch142: 0001-Expose-and-document-rpmdb-verifydb-operation.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
@@ -653,8 +657,20 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+* Wed Dec 13 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-29
+- Actually add --verifydb to the man page (RHEL-14591)
+- Don't warn about missing user/group on skipped files (RHEL-18037)
 
-* Mon Dec 11 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-27
+* Mon Dec 11 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-28
+- Fix warning if file removal fails
+
+* Mon Nov 27 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-27
+- Fix short circuiting of version strings in expressions (RHEL-15688)
+- Fix description of whatconflicts in the man page (RHEL-6303)
+- Expose and document rpmdb --verifydb operation (RHEL-14591)
+- Fixes to the file handling backport
+
+* Fri Nov 10 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-26
 - Backport file handling code from rpm-4.19 to fix CVE-2021-35937,
   CVE-2021-35938 and CVE-2021-35939
 
