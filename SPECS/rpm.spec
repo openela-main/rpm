@@ -32,7 +32,7 @@
 
 %global rpmver 4.14.3
 #global snapver rc2
-%global rel 28
+%global rel 31
 
 %global srcver %{version}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:%{name}-%(echo %{version} | cut -d'.' -f1-2).x}
@@ -160,6 +160,8 @@ Patch1000: disable-python-extra.patch
 Patch1001: compile-with-Platform-Python-binary-where-relevant.patch
 # make unversioned %%__python an error unless explicitly overridden
 Patch1002: rpm-4.14.2-unversioned-python.patch
+# Make brp-python-bytecompile compatible with Python 3.10+
+Patch1003: brp-python-bytecompile-compatibility-with-newer-pyth.patch
 
 # Partially GPL/LGPL dual-licensed and some bits with BSD
 # SourceLicense: (GPLv2+ and LGPLv2+ with exceptions) and BSD 
@@ -709,9 +711,13 @@ make check || cat tests/rpmtests.log
 %doc doc/librpm/html/*
 
 %changelog
-* Tue Dec 12 2023 Florian Festi <ffesti@redhat.com> - 4.14.3-28
+* Tue Dec 12 2023 Florian Festi <ffesti@redhat.com> - 4.14.3-31
 - Backport file handling code from rpm-4.19 to fix CVE-2021-35937,
   CVE-2021-35938 and CVE-2021-35939
+
+* Tue Sep 26 2023 Lumír Balhar <lbalhar@redhat.com> - 4.14.3-27
+- Make brp-python-bytecompile script compatible with Python 3.10+
+Resolves: RHEL-6423
 
 * Mon Dec 19 2022 Florian Festi <ffesti@redhat.com> - 4.14.3-26
 - Add --nocompression to rpm2archive (#2129345)
