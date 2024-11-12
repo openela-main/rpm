@@ -1,0 +1,39 @@
+From fd57fc716231c8296d340fdb4c0f6eac176f7f7c Mon Sep 17 00:00:00 2001
+From: Florian Festi <ffesti@redhat.com>
+Date: Fri, 20 Aug 2021 15:14:16 +0200
+Subject: [PATCH] Don't segfault on missing priority tag
+
+Resolves: #1636
+Related: #1638
+---
+ lib/rpmtriggers.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/lib/rpmtriggers.c b/lib/rpmtriggers.c
+index fc809a65e..d541974e8 100644
+--- a/lib/rpmtriggers.c
++++ b/lib/rpmtriggers.c
+@@ -517,7 +517,8 @@ rpmRC runFileTriggers(rpmts ts, rpmte te, rpmsenseFlags sense,
+ 	if (matchFunc(ts, te, pfx, sense)) {
+ 	    for (i = 0; i < rpmdbIndexIteratorNumPkgs(ii); i++) {
+ 		struct rpmtd_s priorities;
+-		unsigned int priority;
++		unsigned int priority = 0;
++		unsigned int *priority_ptr;
+ 		unsigned int offset = rpmdbIndexIteratorPkgOffset(ii, i);
+ 		unsigned int tix = rpmdbIndexIteratorTagNum(ii, i);
+ 
+@@ -535,7 +536,9 @@ rpmRC runFileTriggers(rpmts ts, rpmte te, rpmsenseFlags sense,
+ 		trigH = rpmdbGetHeaderAt(rpmtsGetRdb(ts), offset);
+ 		headerGet(trigH, priorityTag, &priorities, HEADERGET_MINMEM);
+ 		rpmtdSetIndex(&priorities, tix);
+-		priority = *rpmtdGetUint32(&priorities);
++		priority_ptr = rpmtdGetUint32(&priorities);
++		if (priority_ptr)
++		    priority = *priority_ptr;
+ 		headerFree(trigH);
+ 
+ 		/* Store file trigger in array */
+-- 
+2.45.1
+

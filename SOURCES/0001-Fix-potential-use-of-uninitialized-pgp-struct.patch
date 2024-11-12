@@ -1,0 +1,12 @@
+diff -up rpm-4.16.1.3/lib/rpmts.c.orig rpm-4.16.1.3/lib/rpmts.c
+--- rpm-4.16.1.3/lib/rpmts.c.orig	2024-07-11 13:55:35.430198126 +0200
++++ rpm-4.16.1.3/lib/rpmts.c	2024-07-11 13:55:59.243061182 +0200
+@@ -482,6 +482,8 @@ static int makePubkeyHeader(rpmts ts, rp
+     int rc = -1;
+     int i;
+ 
++    memset(&kd, 0, sizeof(kd));
++
+     if ((enc = rpmPubkeyBase64(key)) == NULL)
+ 	goto exit;
+     if ((dig = rpmPubkeyDig(key)) == NULL)

@@ -1,0 +1,57 @@
+From d29651be364ef72c7c0f468157602e4ed5cab4ff Mon Sep 17 00:00:00 2001
+From: Florian Festi <ffesti@redhat.com>
+Date: Wed, 12 Jun 2024 15:46:12 +0200
+Subject: [PATCH] Talk about rpmsign in the rpmsign man page
+
+In the past handling signatures was done by the rpm / rpmbuild binaries
+directly. When this functionality was split into rpmsign the man page
+was not adjusted accoringly. This is the long overdue update.
+
+Resolves: # 3125
+
+(backported from commit 8e1f55c7004e8c1a7d9140ab2dd9456a7ace3e77)
+---
+ doc/rpmsign.8 | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/doc/rpmsign.8 b/doc/rpmsign.8
+index f7ceae89b..6c5bcc8ef 100644
+--- a/doc/rpmsign.8
++++ b/doc/rpmsign.8
+@@ -5,9 +5,9 @@ rpmsign \- RPM Package Signing
+ .SS "SIGNING PACKAGES:"
+ .PP
+ 
+-\fBrpm\fR \fB--addsign|--resign\fR [\fBrpmsign-options\fR] \fB\fIPACKAGE_FILE\fB\fR\fI ...\fR
++\fBrpmsign\fR \fB--addsign|--resign\fR [\fBrpmsign-options\fR] \fB\fIPACKAGE_FILE\fB\fR\fI ...\fR
+ 
+-\fBrpm\fR \fB--delsign\fR \fB\fIPACKAGE_FILE\fB\fR\fI ...\fR
++\fBrpmsign\fR \fB--delsign\fR \fB\fIPACKAGE_FILE\fB\fR\fI ...\fR
+ 
+ .SS "rpmsign-options"
+ .PP
+@@ -22,10 +22,10 @@ options generate and insert new signatures for each package
+ existing signatures. There are two options for historical reasons,
+ there is no difference in behavior currently.
+ 
+-To create a signature rpm needs to verify the package's checksum. As a result
++To create a signature rpmsign needs to verify the package's checksum. As a result
+ packages with a MD5/SHA1 checksums cannot be signed in FIPS mode.
+ 
+-\fBrpm\fR \fB--delsign\fR \fB\fIPACKAGE_FILE\fB\fR\fI ...\fR
++\fBrpmsign\fR \fB--delsign\fR \fB\fIPACKAGE_FILE\fB\fR\fI ...\fR
+ 
+ .PP
+ Delete all signatures from each package \fIPACKAGE_FILE\fR given.
+@@ -36,7 +36,7 @@ Delete all signatures from each package \fIPACKAGE_FILE\fR given.
+ \fB--rpmv3\fR
+ Force RPM V3 header+payload signature addition.
+ These are expensive and redundant baggage on packages where a separate
+-payload digest exists (packages built with rpm >= 4.14).  Rpm will
++payload digest exists (packages built with rpm >= 4.14).  Rpmsign will
+ automatically detect the need for V3 signatures, but this option can be
+ used to force their creation if the packages must be fully 
+ signature verifiable with rpm < 4.14 or other interoperability reasons.
+-- 
+2.45.2
+

@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 29
+%global rel 34
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -108,6 +108,12 @@ Patch134: 0001-Don-t-warn-about-missing-user-group-on-skipped-files.patch
 Patch140: 0001-Fix-short-circuiting-of-version-strings-in-expressio.patch
 Patch141: 0001-Fix-a-copy-paste-help-description-of-whatconflicts-R.patch
 Patch142: 0001-Expose-and-document-rpmdb-verifydb-operation.patch
+Patch143: 0001-Don-t-segfault-on-missing-priority-tag.patch
+Patch144: 0001-Use-unsigned-integers-for-buildtime-too-for-Y2K38-sa.patch
+Patch145: 0001-Fix-potential-use-of-uninitialized-pipe-array.patch
+Patch146: 0001-Fix-potential-use-of-uninitialized-pgp-struct.patch
+Patch147: 0001-Add-SourceLicense-tag-to-spec-syntax.patch
+Patch148: 0001-Talk-about-rpmsign-in-the-rpmsign-man-page.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
@@ -129,6 +135,8 @@ Patch916: 0006-debugedit-Handle-DWARF-5-debug_line-and-debug_line_s.patch
 Patch1000: rpm-4.16.1.3-hashtab-use-after-free-fix.patch
 Patch1001: rpm-4.16.1.3-find_debuginfo_vendor_opts.patch
 Patch1002: 0001-Macroize-find-debuginfo-script-location.patch
+Patch1003: 0001-Fix-root-relocation-regression.patch
+Patch1004: 0001-Skip-to-hashed-subpacket-data-directly.patch
 
 # Partially GPL/LGPL dual-licensed and some bits with BSD
 # SourceLicense: (GPLv2+ and LGPLv2+ with exceptions) and BSD
@@ -657,6 +665,28 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+* Tue Aug 13 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-34
+- Fix discarded const qualifier in previous patch (RHEL-22607)
+
+* Mon Aug 05 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-33
+- Fix root relocation regression (RHEL-28967)
+- Don't confuse OpenScanHub with false array overrun (RHEL-22607)
+
+* Fri Jul 12 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-32
+- Revert incorrect fix for false array overrun (RHEL-22607)
+
+* Fri Jul 12 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-31
+- Fix potential use of uninitialized pipe array (RHEL-22604)
+- Fix potential use of uninitialized pgp struct (RHEL-22605)
+- Don't confuse OpenScanHub with false array overrun (RHEL-22607)
+- Add SourceLicense tag to spec syntax (RHEL-28798)
+- Talk about rpmsign in the rpmsign(8) man page (RHEL-40895)
+
+* Mon Jun 03 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-30
+- Don't segfault on missing priority tag (RHEL-35249)
+- Use unsigned integers for buildtime too for Y2K38 safety (RHEL-22602)
+- Rebuild against libimaevm.so.4 (RHEL-32505)
+
 * Wed Dec 13 2023 Florian Festi <ffesti@redhat.com> - 4.16.1.3-29
 - Actually add --verifydb to the man page (RHEL-14591)
 - Don't warn about missing user/group on skipped files (RHEL-18037)

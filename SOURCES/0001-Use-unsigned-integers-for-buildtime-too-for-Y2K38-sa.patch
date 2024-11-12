@@ -1,0 +1,32 @@
+From 97aa64d8281974fb369c66d5aef8650515b89c52 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 24 Jan 2024 12:03:39 +0200
+Subject: [PATCH] Use unsigned integers for buildtime too for Y2K38 safety
+
+This little patch buys us 68 extra years to move to 64bit time tags
+in rpm. That seems achievable.
+
+Fixes: #1228
+---
+ build/build.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/build/build.c b/build/build.c
+index e4081c673..0ac8bf6c9 100644
+--- a/build/build.c
++++ b/build/build.c
+@@ -36,9 +36,9 @@ static rpm_time_t getBuildTime(void)
+         if (srcdate == endptr || *endptr || errno != 0)
+             rpmlog(RPMLOG_ERR, _("unable to parse SOURCE_DATE_EPOCH\n"));
+         else
+-            buildTime = (int32_t) epoch;
++            buildTime = (uint32_t) epoch;
+     } else
+-        buildTime = (int32_t) time(NULL);
++        buildTime = (uint32_t) time(NULL);
+ 
+     return buildTime;
+ }
+-- 
+2.45.1
+
