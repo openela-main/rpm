@@ -32,7 +32,7 @@
 
 %global rpmver 4.14.3
 #global snapver rc2
-%global rel 31
+%global rel 32
 
 %global srcver %{version}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:%{name}-%(echo %{version} | cut -d'.' -f1-2).x}
@@ -141,6 +141,11 @@ Patch506: 0004-Bump-the-minimum-Python-version-requirement-to-2.7.patch
 Patch507: 0005-Drop-an-unnecessary-Python-2-vs-3-incompatibility-fr.patch
 Patch508: rpm-4.14.3-python3.diff
 Patch509: rpm-4-14.3-selinux-log-error.patch
+Patch510: 0001-Don-t-segfault-on-missing-priority-tag.patch
+Patch511: 0002-Fix-IMA-signature-fubar-take-III-1833-RhBug-2018937.patch
+Patch512: 0003-Fix-root-relocation-regression.patch
+Patch513: 0004-Report-unsafe-symlinks-during-installation-as-a-spec.patch
+Patch514: 0005-Fix-FA_TOUCH-ed-files-getting-removed-on-failed-upda.patch
 
 # These are not yet upstream
 # Audit support
@@ -711,6 +716,13 @@ make check || cat tests/rpmtests.log
 %doc doc/librpm/html/*
 
 %changelog
+* Mon Oct 21 2024 Michal Domonkos <mdomonko@redhat.com> - 4.14.3-32
+- Fix FA_TOUCH'ed files getting removed on failed update (RHEL-63069)
+- Fix IMA signature lengths assumed constant (RHEL-39896)
+- Fix root relocation regression (RHEL-49494)
+- Report unsafe symlinks during installation as a specific case (RHEL-39897)
+- Don't segfault on missing priority tag (RHEL-39894)
+
 * Tue Dec 12 2023 Florian Festi <ffesti@redhat.com> - 4.14.3-31
 - Backport file handling code from rpm-4.19 to fix CVE-2021-35937,
   CVE-2021-35938 and CVE-2021-35939
