@@ -1,0 +1,227 @@
+From 2931047efc31f1288788bcdc8bd1d00b53cb9c76 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 30 Mar 2022 11:02:23 +0300
+Subject: [PATCH 1/3] Issue warning on implicit "%patch zero" variants,
+ sanitize semantics
+
+Supporting `%patch` with no number specified, in particular combinations
+like `%patch 1` meaning patches 0 and 1 (!), prevents further progress
+in this area. Dropping support for these is a case of sawing off a limb
+to save the patient, but there's enough history to numberless `%patch`
+that we need to take the long route of deprecating it first.
+
+To be exact:
+- we now issue a warning on `%patch` where no patch numbers have been
+  specified, but assume it to mean Patch0 for now
+- `%patch N' applies patch N and nothing else
+
+While at it, avoid an unnecessary strdup() and a dangling buf after
+free.
+
+(cherry picked from commit 02b8d8dccc0f045b0ebf81785cf6ad1056cf550e)
+---
+ build/parsePrep.c | 19 ++++++++-----------
+ 1 file changed, 8 insertions(+), 11 deletions(-)
+
+diff --git a/build/parsePrep.c b/build/parsePrep.c
+index d92e5cdf0..533de8a2c 100644
+--- a/build/parsePrep.c
++++ b/build/parsePrep.c
+@@ -380,9 +380,7 @@ exit:
+  * - %patchN is equal to %patch -P\<N\>
+  * - -P\<N\> -P\<N+1\>... can be used to apply several patch on a single line
+  * - Any trailing arguments are treated as patch numbers
+- * - Any combination of the above, except unless at least one -P is specified,
+- *   %patch is treated as "numberless patch" so that "%patch 1" actually tries
+- *   to pull in numberless "Patch:" and numbered "Patch1:".
++ * - Any combination of the above
+  *
+  * @param spec		build info
+  * @param line		current line from spec file
+@@ -420,15 +418,8 @@ static rpmRC doPatchMacro(rpmSpec spec, const char *line)
+     /* Convert %patchN to %patch -PN to simplify further processing */
+     if (! strchr(" \t\n", line[6])) {
+ 	rasprintf(&buf, "%%patch -P %s", line + 6);
+-    } else {
+-	/* %patch without a number refers to patch 0 */
+-	if (strstr(line+6, " -P") == NULL)
+-	    rasprintf(&buf, "%%patch -P %d %s", 0, line + 6);
+-	else
+-	    buf = xstrdup(line);
+     }
+-    poptParseArgvString(buf, &argc, &argv);
+-    free(buf);
++    poptParseArgvString(buf ? buf : line, &argc, &argv);
+ 
+     /* 
+      * Grab all -P<N> numbers for later processing. Stored as strings
+@@ -459,6 +450,11 @@ static rpmRC doPatchMacro(rpmSpec spec, const char *line)
+     /* Any trailing arguments are treated as patch numbers */
+     argvAppend(&patchnums, (ARGV_const_t) poptGetArgs(optCon));
+ 
++    if (argvCount(patchnums) == 0) {
++	rpmlog(RPMLOG_WARNING, _("Patch number not specified: %s\n"), line);
++	argvAdd(&patchnums, "0");
++    }
++
+     /* Convert to number, generate patch command and append to %prep script */
+     for (patch = patchnums; *patch; patch++) {
+ 	uint32_t pnum;
+@@ -484,6 +480,7 @@ exit:
+     free(opt_d);
+     free(opt_o);
+     free(argv);
++    free(buf);
+     poptFreeContext(optCon);
+     return rc;
+ }
+-- 
+2.47.0
+
+
+From a8e821ff5c126613e13277bfd8b2050b71d1ea4e Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Fri, 9 Aug 2024 11:57:47 +0200
+Subject: [PATCH 2/3] Safeguard against silent Patch0 omission
+
+Commit 02b8d8dccc0f045b0ebf81785cf6ad1056cf550e fixed %patch so that it
+no longer applies Patch0 implicitly when used without the -P option.  A
+side effect of this is that, if a spec happens to rely on this quirky
+behavior, it will now skip Patch0 silently.
+
+To prevent such silent regressions in existing packages, make explicit
+Patch0 application mandatory unless all %patch lines in the spec use the
+non-ambiguous syntax (i.e. %patchN, %patch -PN or %patch 0).
+
+Basically, this reverts the above commit but replaces the original code
+with an error message.
+
+Resolves: RHEL-6294
+---
+ build/parsePrep.c         | 16 ++++++++++++++++
+ build/rpmbuild_internal.h |  3 +++
+ build/spec.c              |  3 +++
+ 3 files changed, 22 insertions(+)
+
+diff --git a/build/parsePrep.c b/build/parsePrep.c
+index 533de8a2c..9d64c2141 100644
+--- a/build/parsePrep.c
++++ b/build/parsePrep.c
+@@ -418,6 +418,10 @@ static rpmRC doPatchMacro(rpmSpec spec, const char *line)
+     /* Convert %patchN to %patch -PN to simplify further processing */
+     if (! strchr(" \t\n", line[6])) {
+ 	rasprintf(&buf, "%%patch -P %s", line + 6);
++    } else {
++	/* %patch without a number used to refer to patch 0 */
++	if (strstr(line+6, " -P") == NULL)
++	    spec->patch0_implicit = line;
+     }
+     poptParseArgvString(buf ? buf : line, &argc, &argv);
+ 
+@@ -464,6 +468,8 @@ static rpmRC doPatchMacro(rpmSpec spec, const char *line)
+ 		     *patch, line);
+ 	    goto exit;
+ 	}
++	if (pnum == 0)
++	    spec->patch0_explicit = line;
+ 	s = doPatch(spec, pnum, opt_p, opt_b, opt_R, opt_E, opt_F, opt_d, opt_o, opt_Z);
+ 	if (s == NULL) {
+ 	    goto exit;
+@@ -516,8 +522,18 @@ int parsePrep(rpmSpec spec)
+ 	}
+     }
+ 
++    if (spec->patch0_implicit && !spec->patch0_explicit &&
++	    findSource(spec, 0, RPMBUILD_ISPATCH)) {
++	rpmlog(RPMLOG_ERR, _("Patch0 no longer applied implicitly, pass 0 or -P0: %s\n"),
++	       spec->patch0_implicit);
++	res = PART_ERROR;
++	goto exit;
++    }
++
+ exit:
+     argvFree(saveLines);
++    spec->patch0_implicit = NULL;
++    spec->patch0_explicit = NULL;
+ 
+     return res;
+ }
+diff --git a/build/rpmbuild_internal.h b/build/rpmbuild_internal.h
+index 797d27744..545cc1f43 100644
+--- a/build/rpmbuild_internal.h
++++ b/build/rpmbuild_internal.h
+@@ -132,6 +132,9 @@ struct rpmSpec_s {
+     int autonum_patch;
+     int autonum_source;
+ 
++    const char *patch0_implicit;
++    const char *patch0_explicit;
++
+     char * sourceRpmName;
+     unsigned char * sourcePkgId;
+     Package sourcePackage;
+diff --git a/build/spec.c b/build/spec.c
+index 6d402319f..72f0d25bd 100644
+--- a/build/spec.c
++++ b/build/spec.c
+@@ -232,6 +232,9 @@ rpmSpec newSpec(void)
+     spec->autonum_patch = -1;
+     spec->autonum_source = -1;
+ 
++    spec->patch0_implicit = NULL;
++    spec->patch0_explicit = NULL;
++
+     spec->sourceRpmName = NULL;
+     spec->sourcePkgId = NULL;
+     spec->sourcePackage = NULL;
+-- 
+2.47.0
+
+
+From 896c7e37d65b1019cc179abcf9524807ba2006d2 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Wed, 6 Nov 2024 16:10:53 +0100
+Subject: [PATCH 3/3] Improve newly added %patch warning/error messages
+
+Make it obvious that the numberless %patch syntax is now *deprecated*
+(and thus no longer works in RHEL-10).
+
+Also suggest an actual fix to the user (in both messages), much like we
+have for the %patchN warning in RPM 4.19 (see commit
+eb5ece1267a22330f6116149997cf5cc1c22b21f).
+
+Kudos to Eva Mrakova for noticing & suggesting this.
+
+Related: RHEL-6294
+---
+ build/parsePrep.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/build/parsePrep.c b/build/parsePrep.c
+index 9d64c2141..63014ea89 100644
+--- a/build/parsePrep.c
++++ b/build/parsePrep.c
+@@ -455,7 +455,8 @@ static rpmRC doPatchMacro(rpmSpec spec, const char *line)
+     argvAppend(&patchnums, (ARGV_const_t) poptGetArgs(optCon));
+ 
+     if (argvCount(patchnums) == 0) {
+-	rpmlog(RPMLOG_WARNING, _("Patch number not specified: %s\n"), line);
++	rpmlog(RPMLOG_WARNING, _("%%patch (without a number) is deprecated, "
++				 "add 0 (or -P 0): %s\n"), line);
+ 	argvAdd(&patchnums, "0");
+     }
+ 
+@@ -524,8 +525,8 @@ int parsePrep(rpmSpec spec)
+ 
+     if (spec->patch0_implicit && !spec->patch0_explicit &&
+ 	    findSource(spec, 0, RPMBUILD_ISPATCH)) {
+-	rpmlog(RPMLOG_ERR, _("Patch0 no longer applied implicitly, pass 0 or -P0: %s\n"),
+-	       spec->patch0_implicit);
++	rpmlog(RPMLOG_ERR, _("%%patch N no longer applies Patch0 implicitly, "
++			     "add 0 (or -P 0): %s\n"), spec->patch0_implicit);
+ 	res = PART_ERROR;
+ 	goto exit;
+     }
+-- 
+2.47.0
+

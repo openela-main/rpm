@@ -1,0 +1,46 @@
+From 9eedcd6b770154a8d853db30b49d411823d64c44 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 18 Oct 2024 14:50:35 +0300
+Subject: [PATCH 2/2] Fix FA_TOUCH'ed files getting removed on failed update
+
+On install/update, most files are laid down with a temporary suffix
+and if the update fails, removing those at the end of the loop is
+the right thing to do. However FA_TOUCH'ed files were already there,
+we only update their metadata, and we better not remove them!
+
+AFAICS this all versions since rpm >= 4.14 in one way or the other.
+If %_minimize_writes is enabled then it affects way more than just
+unmodified config files.
+
+The test is a simplified version of pam update failing in the original
+report. Technically, --nomtime should not be needed for the test
+verification but we don't even try to restore the metadata on failure,
+and fixing that is way out of scope here.
+
+Backported from commits:
+027ef640b33b38ca257bb301bb302e9c71d43c27
+
+Tests are excluded from this backport since they would need significant
+rework, the use case will be covered by Beaker.
+
+Fixes: RHEL-63070
+---
+ lib/fsm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/fsm.c b/lib/fsm.c
+index 720d4a2ec..91155c13c 100644
+--- a/lib/fsm.c
++++ b/lib/fsm.c
+@@ -1093,7 +1093,7 @@ setmeta:
+ 	    if (ensureDir(NULL, rpmfiDN(fi), 0, 0, 1, &di.dirfd))
+ 		continue;
+ 
+-	    if (fp->stage > FILE_NONE && !fp->skip) {
++	    if (fp->stage > FILE_NONE && !fp->skip && fp->action != FA_TOUCH) {
+ 		(void) fsmRemove(di.dirfd, fp->fpath, fp->sb.st_mode);
+ 	    }
+ 	}
+-- 
+2.47.1
+

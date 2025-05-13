@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 34
+%global rel 37
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -114,6 +114,9 @@ Patch145: 0001-Fix-potential-use-of-uninitialized-pipe-array.patch
 Patch146: 0001-Fix-potential-use-of-uninitialized-pgp-struct.patch
 Patch147: 0001-Add-SourceLicense-tag-to-spec-syntax.patch
 Patch148: 0001-Talk-about-rpmsign-in-the-rpmsign-man-page.patch
+Patch149: 0001-Allow-parametric-macros-to-opt-out-of-option-process.patch
+Patch150: 0001-Report-unsafe-symlinks-during-installation-as-a-spec.patch
+Patch151: 0002-Fix-FA_TOUCH-ed-files-getting-removed-on-failed-upda.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
@@ -137,6 +140,7 @@ Patch1001: rpm-4.16.1.3-find_debuginfo_vendor_opts.patch
 Patch1002: 0001-Macroize-find-debuginfo-script-location.patch
 Patch1003: 0001-Fix-root-relocation-regression.patch
 Patch1004: 0001-Skip-to-hashed-subpacket-data-directly.patch
+Patch1005: rpm-4.16.1.3-fix-patch-zero-semantics.patch
 
 # Partially GPL/LGPL dual-licensed and some bits with BSD
 # SourceLicense: (GPLv2+ and LGPLv2+ with exceptions) and BSD
@@ -665,6 +669,18 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+* Mon Jan 13 2025 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-37
+- Allow parametric macros to opt out of option processing (RHEL-67161)
+- Report unsafe symlinks during installation as a specific case (RHEL-33393)
+- Fix FA_TOUCH'ed files getting removed on failed update (RHEL-63070)
+
+* Wed Nov 06 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-36
+- Improve newly added %%patch warning/error messages (RHEL-6294)
+
+* Wed Oct 16 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-35
+- Fix %%patch N applying Patch0 implicitly (RHEL-6294)
+- Issue deprecation warning for number-less %%patch (RHEL-6294)
+
 * Tue Aug 13 2024 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-34
 - Fix discarded const qualifier in previous patch (RHEL-22607)
 

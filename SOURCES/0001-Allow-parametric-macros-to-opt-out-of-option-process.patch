@@ -1,0 +1,92 @@
+From 1f9a0e049e2db70e6fc6d630fa3c63f57517dea4 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 9 Oct 2020 14:43:14 +0300
+Subject: [PATCH] Allow parametric macros to opt out of option processing
+ (#547)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Macros might want to pass along options meant for others while perhaps
+modifying some of them, without exposing it all to users.
+
+Have "-" as the parametric macro opts string disable all options processing
+in rpm, allowing the macro to handle the raw argument list as they place.
+
+Fixes: #547
+
+(cherry picked from commit f9516434dd70cf0d5125e9e997b2c278b4fb4bf2)
+
+Co-Authored-By: Miro Hrončok <miro@hroncok.cz>
+---
+ doc/manual/macros |  3 ++-
+ rpmio/macro.c     |  7 ++++++-
+ tests/rpmmacro.at | 12 ++++++++++++
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/doc/manual/macros b/doc/manual/macros
+index 45345d036..a33c54e03 100644
+--- a/doc/manual/macros
++++ b/doc/manual/macros
+@@ -22,7 +22,8 @@ All whitespace surrounding \<body\> is removed.  Name may be composed
+ of alphanumeric characters, and the character `_' and must be at least
+ 3 characters in length. A macro without an (opts) field is "simple" in that
+ only recursive macro expansion is performed. A parameterized macro contains
+-an (opts) field. The opts (i.e. string between parentheses) is passed
++an (opts) field. "-" as opts disables all option processing, otherwise
++the opts (i.e. string between parentheses) are passed
+ exactly as is to getopt(3) for argc/argv processing at the beginning of
+ a macro invocation.  While a parameterized macro is being expanded, the
+ following shell-like macros are available:
+diff --git a/rpmio/macro.c b/rpmio/macro.c
+index 35d896049..490bf9a6a 100644
+--- a/rpmio/macro.c
++++ b/rpmio/macro.c
+@@ -910,6 +910,7 @@ grabArgs(MacroBuf mb, const rpmMacroEntry me, const char * se,
+     ARGV_t argv = NULL;
+     int argc = 0;
+     int c;
++    int run;
+ 
+     /* 
+      * Prepare list of call arguments, starting with macro name as argv[0].
+@@ -960,8 +961,12 @@ grabArgs(MacroBuf mb, const rpmMacroEntry me, const char * se,
+     opts = me->opts;
+     argc = argvCount(argv);
+ 
++    /* If option processing is disabled, the while below will be skipped */
++    run = strcmp(opts, "-");
++    if (!run)
++	optind = 1;
+     /* Define option macros. */
+-    while ((c = getopt(argc, argv, opts)) != -1)
++    while (run && (c = getopt(argc, argv, opts)) != -1)
+     {
+ 	char *name = NULL, *body = NULL;
+ 	if (c == '?' || strchr(opts, c) == NULL) {
+diff --git a/tests/rpmmacro.at b/tests/rpmmacro.at
+index 873783153..faafb170d 100644
+--- a/tests/rpmmacro.at
++++ b/tests/rpmmacro.at
+@@ -198,6 +198,18 @@ bar' \
+ ])
+ AT_CLEANUP
+ 
++AT_SETUP([parametrized macro 6])
++AT_KEYWORDS([macros])
++AT_CHECK([
++runroot rpm \
++    --define '%foo(-) %{*}' \
++    --eval '%foo 5 a -z -b2'
++],
++[0],
++[5 a -z -b2
++])
++AT_CLEANUP
++
+ AT_SETUP([uncompress macro 1])
+ AT_KEYWORDS([macros])
+ AT_CHECK([
+-- 
+2.47.1
+
