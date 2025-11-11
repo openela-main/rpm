@@ -1,0 +1,198 @@
+From eba94c7f093cdf683d7dadff1574492d03be7559 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Tue, 2 Apr 2024 13:21:00 +0300
+Subject: [PATCH] Ensure binary and source headers are identified as such after
+ parse
+
+The two commits improve source and binary package header detection right
+after spec parse, fixing #2819 in the process. Details in commits.
+
+Backported from commits:
+8703ce740f24d7b7c443cce74fccf08df00e89c2
+dc47a50c6345a25b861305d8aa8ae464098834ff
+e0e43e93777701f5f2e6f7505b8e9b9e9681aee1
+0320d61198537079c80087a2b174963d25893b79
+
+Fixes: RHEL-87383
+---
+ build/build.c     |  1 +
+ build/files.c     | 15 +--------------
+ build/pack.c      |  2 --
+ build/parseSpec.c | 24 +++++++++++++++++++++++-
+ lib/headerutil.c  |  9 ++++++++-
+ 5 files changed, 33 insertions(+), 18 deletions(-)
+
+diff --git a/build/build.c b/build/build.c
+index f2cf98c8b..c35fd137a 100644
+--- a/build/build.c
++++ b/build/build.c
+@@ -393,6 +393,7 @@ static rpmRC buildSpec(rpmts ts, BTA_t buildArgs, rpmSpec spec, int what)
+ 		!(spec->flags & RPMSPEC_FORCE)) {
+ 		/* Create buildreqs package */
+ 		char *nvr = headerGetAsString(spec->packages->header, RPMTAG_NVR);
++		free(spec->sourceRpmName);
+ 		rasprintf(&spec->sourceRpmName, "%s.buildreqs.nosrc.rpm", nvr);
+ 		free(nvr);
+ 		/* free sources to not include them in the buildreqs package */
+diff --git a/build/files.c b/build/files.c
+index c403c806e..61f7ff10f 100644
+--- a/build/files.c
++++ b/build/files.c
+@@ -2661,16 +2661,6 @@ exit:
+     return fl.processingFailed ? RPMRC_FAIL : RPMRC_OK;
+ }
+ 
+-static void genSourceRpmName(rpmSpec spec)
+-{
+-    if (spec->sourceRpmName == NULL) {
+-	char *nvr = headerGetAsString(spec->packages->header, RPMTAG_NVR);
+-	rasprintf(&spec->sourceRpmName, "%s.%ssrc.rpm", nvr,
+-	    	  spec->noSource ? "no" : "");
+-	free(nvr);
+-    }
+-}
+-
+ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
+ {
+     struct Source *srcPtr;
+@@ -2688,7 +2678,6 @@ rpmRC processSourceFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags)
+ 	oneshot = 1;
+     }
+ 
+-    genSourceRpmName(spec);
+     /* Construct the file list and source entries */
+     argvAdd(&files, spec->specFile);
+     for (srcPtr = spec->sources; srcPtr != NULL; srcPtr = srcPtr->next) {
+@@ -2838,6 +2827,7 @@ static rpmTagVal copyTagsFromMainDebug[] = {
+     RPMTAG_OS,
+     RPMTAG_PLATFORM,
+     RPMTAG_OPTFLAGS,
++    RPMTAG_SOURCERPM,
+     0
+ };
+ 
+@@ -3130,7 +3120,6 @@ rpmRC processBinaryFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
+     elf_version (EV_CURRENT);
+ #endif
+     check_fileList = newStringBuf();
+-    genSourceRpmName(spec);
+     buildroot = rpmGenPath(spec->rootDir, spec->buildRoot, NULL);
+     
+     if (rpmExpandNumeric("%{?_debuginfo_subpackages}")) {
+@@ -3186,8 +3175,6 @@ rpmRC processBinaryFiles(rpmSpec spec, rpmBuildPkgFlags pkgFlags,
+ 	if (pkg->fileList == NULL)
+ 	    continue;
+ 
+-	headerPutString(pkg->header, RPMTAG_SOURCERPM, spec->sourceRpmName);
+-
+ 	nvr = headerGetAsString(pkg->header, RPMTAG_NVRA);
+ 	rpmlog(RPMLOG_NOTICE, _("Processing files: %s\n"), nvr);
+ 	free(nvr);
+diff --git a/build/pack.c b/build/pack.c
+index f7dac6d9a..9eb304642 100644
+--- a/build/pack.c
++++ b/build/pack.c
+@@ -796,13 +796,11 @@ rpmRC packageSources(rpmSpec spec, char **cookie)
+ {
+     Package sourcePkg = spec->sourcePackage;
+     rpmRC rc;
+-    uint32_t one = 1;
+ 
+     /* Add some cruft */
+     headerPutString(sourcePkg->header, RPMTAG_RPMVERSION, VERSION);
+     headerPutString(sourcePkg->header, RPMTAG_BUILDHOST, spec->buildHost);
+     headerPutUint32(sourcePkg->header, RPMTAG_BUILDTIME, &(spec->buildTime), 1);
+-    headerPutUint32(sourcePkg->header, RPMTAG_SOURCEPACKAGE, &one, 1);
+ 
+     /* Include spec in parsed and expanded form */
+     headerPutString(sourcePkg->header, RPMTAG_SPEC, getStringBuf(spec->parsed));
+diff --git a/build/parseSpec.c b/build/parseSpec.c
+index 3929c0a26..0ecfcb6cd 100644
+--- a/build/parseSpec.c
++++ b/build/parseSpec.c
+@@ -648,11 +648,13 @@ static void initSourceHeader(rpmSpec spec)
+ {
+     Package sourcePkg = spec->sourcePackage;
+     struct Source *srcPtr;
++    uint32_t one = 1;
+ 
+     if (headerIsEntry(sourcePkg->header, RPMTAG_NAME))
+ 	return;
+ 
+     /* Only specific tags are added to the source package header */
++    headerPutUint32(sourcePkg->header, RPMTAG_SOURCEPACKAGE, &one, 1);
+     headerCopyTags(spec->packages->header, sourcePkg->header, sourceTags);
+ 
+     /* Add the build restrictions */
+@@ -694,6 +696,12 @@ static void initSourceHeader(rpmSpec spec)
+ 	    }
+ 	}
+     }
++    if (spec->sourceRpmName == NULL) {
++	char *nvr = headerGetAsString(spec->packages->header, RPMTAG_NVR);
++	rasprintf(&spec->sourceRpmName, "%s.%ssrc.rpm", nvr,
++		spec->noSource ? "no" : "");
++	free(nvr);
++    }
+ 
+     /* Provide all package NEVRs that would be built */
+     for (Package p = spec->packages; p != NULL; p = p->next) {
+@@ -1088,6 +1096,13 @@ errxit:
+ 
+ 
+ 
++static void finalizeSpec(rpmSpec spec)
++{
++    for (Package p = spec->packages; p != NULL; p = p->next) {
++	headerPutString(p->header, RPMTAG_SOURCERPM, spec->sourceRpmName);
++    }
++}
++
+ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
+ 			 const char *buildRoot, int recursing)
+ {
+@@ -1131,7 +1146,11 @@ errxit:
+ rpmSpec rpmSpecParse(const char *specFile, rpmSpecFlags flags,
+ 		     const char *buildRoot)
+ {
+-    return parseSpec(specFile, flags, buildRoot, 0);
++    rpmSpec spec = parseSpec(specFile, flags, buildRoot, 0);
++    if (spec) {
++	finalizeSpec(spec);
++    }
++    return spec;
+ }
+ 
+ rpmRC parseGeneratedSpecs(rpmSpec spec)
+@@ -1158,5 +1177,8 @@ rpmRC parseGeneratedSpecs(rpmSpec spec)
+ 	argvFree(argv);
+     }
+     free(specPattern);
++    if (!rc) {
++	finalizeSpec(spec);
++    }
+     return rc;
+ }
+diff --git a/lib/headerutil.c b/lib/headerutil.c
+index fab210ff2..15aa246ef 100644
+--- a/lib/headerutil.c
++++ b/lib/headerutil.c
+@@ -14,7 +14,14 @@
+ 
+ int headerIsSource(Header h)
+ {
+-    return (!headerIsEntry(h, RPMTAG_SOURCERPM));
++    /* Positive identification of a source package */
++    if (headerIsEntry(h, RPMTAG_SOURCEPACKAGE))
++	return 1;
++    /* Positive identification of a binary package */
++    if (headerIsEntry(h, RPMTAG_SOURCERPM))
++	return 0;
++    /* Dunno, guess so (as per traditional behavior) */
++    return 1;
+ }
+ 
+ Header headerCopy(Header h)
+-- 
+2.50.1
+

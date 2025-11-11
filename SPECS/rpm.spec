@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.1.1
 #global snapver rc1
-%global baserelease 12
+%global baserelease 20
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -97,7 +97,7 @@ BuildRequires: doxygen
 
 %if %{with sequoia}
 %global crypto sequoia
-BuildRequires: rpm-sequoia-devel >= 1.4.0
+BuildRequires: rpm-sequoia-devel >= 1.9.0
 %else
 %global crypto openssl
 BuildRequires: openssl-devel
@@ -153,6 +153,22 @@ rpm-4.18.90-weak-user-group.patch
 0002-Fix-regression-on-build-id-generation-from-compresse.patch
 0003-Fix-root-relocation-regression.patch
 
+0001-Make-_passwd_path-and-_group_path-lists.patch
+0002-Fix-memory-leak-in-rpmspec-shell.patch
+0003-Fix-memory-leak-in-runGPG.patch
+0004-Talk-about-rpmsign-in-the-rpmsign-man-page.patch
+0005-Revert-Drop-redundant-argument-from-rpmcliTransactio.patch
+0001-Store-configurable-digest-s-on-packages-from-verific.patch
+0001-Ensure-binary-and-source-headers-are-identified-as-s.patch
+0002-Add-support-for-spec-local-file-attributes-and-gener.patch
+
+rpm-4.19.x-rpmkeys-add-list-erase.patch
+
+# PQC readiness
+rpm-4.19.x-multisig.patch
+rpm-4.19.x-pqc-algo.patch
+rpm-4.19.x-pqc-fixes.patch
+
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
 
@@ -169,7 +185,7 @@ License:  GPL-2.0-or-later OR LGPL-2.1-or-later
 Requires(meta): %{name} = %{version}-%{release}
 %if %{with sequoia}
 # >= 1.4.0 required for pgpVerifySignature2() and pgpPrtParams2()
-Requires: rpm-sequoia%{_isa} >= 1.4.0
+Requires: rpm-sequoia%{_isa} >= 1.9.0
 # Most systems should have a central package operations log
 Recommends: rpm-plugin-audit
 %endif
@@ -382,6 +398,7 @@ cmake \
       %{?with_libimaevm:-DWITH_IMAEVM=ON} \
       %{!?with_libarchive:-DWITH_ARCHIVE=OFF} \
       %{!?with_check:-DENABLE_TESTSUITE=OFF} \
+      %{?with_sequoia:-DWITH_SEQUOIA=ON} \
       %{!?with_sequoia:-DWITH_INTERNAL_OPENPGP=ON} \
       %{!?with_sequoia:-DWITH_OPENSSL=ON } \
       -DRPM_VENDOR=redhat \
@@ -441,6 +458,8 @@ rm $RPM_BUILD_ROOT/%{_defaultdocdir}/rpm/README.md
 # Signing macros for Sequoia
 install -m 644 %{SOURCE30} $RPM_BUILD_ROOT/%{_defaultdocdir}/rpm/
 
+rm $RPM_BUILD_ROOT/%{rpmhome}/rpmdump
+
 %pre
 # Symlink all rpmdb files to the new location if we're still using /var/lib/rpm
 if [ -d /var/lib/rpm ]; then
@@ -484,7 +503,9 @@ fi
 %attr(0644, root, root) %ghost /usr/lib/sysimage/rpm/.*.lock
 
 %{_bindir}/rpm
+%if %{with libarchive}
 %{_bindir}/rpm2archive
+%endif
 %{_bindir}/rpm2cpio
 %{_bindir}/rpmdb
 %{_bindir}/rpmkeys
@@ -495,7 +516,9 @@ fi
 %{_mandir}/man8/rpm.8*
 %{_mandir}/man8/rpmdb.8*
 %{_mandir}/man8/rpmkeys.8*
+%if %{with libarchive}
 %{_mandir}/man8/rpm2archive.8*
+%endif
 %{_mandir}/man8/rpm2cpio.8*
 %{_mandir}/man8/rpm-misc.8*
 %{_mandir}/man8/rpmsort.8*
@@ -635,6 +658,40 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Tue Aug 26 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-20
+- Fix rpmsign(8) man page (RHEL-109221)
+
+* Mon Aug 25 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-19
+- Additional PQC-related fixes (RHEL-109221)
+
+* Thu Jul 24 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-18
+- Add support for multiple OpenPGP signatures per package (RHEL-100571)
+- Add support for OpenPGP v6 signature pre-salting (RHEL-100571)
+- Add support for PQC algorithms from RFC-9580 (RHEL-100571)
+- Add --list and --erase commands to rpmkeys(8) (RHEL-105421)
+- Fix regression on dynamic subpackage RPMTAG_SOURCERPM missing (RHEL-102023)
+
+* Wed Jun 11 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-17
+- Bump release for another rebuild
+
+* Wed Jun 11 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-16
+- Fix regression on subpackage debuginfo RPMTAG_SOURCERPM missing (RHEL-87383)
+
+* Thu May 29 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-15
+- Add support for spec local file attributes and generators (RHEL-84057)
+- Ensure binary and source headers are identified as such (RHEL-87383)
+
+* Thu Apr 24 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-14
+- Store configurable digest(s) on packages in rpmdb (RHEL-84062)
+- Fix command references in rpmsign(8) man page, take II (RHEL-73173)
+
+* Tue Apr 22 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-13
+- Make %%_passwd_path and %%_group_path into lists (RHEL-78693)
+- Fix memory leak in rpmspec --shell (RHEL-55284)
+- Fix memory leak in rpmsign (RHEL-82284)
+- Fix command references in rpmsign(8) man page (RHEL-73173)
+- Fix exit code regression on update failure (RHEL-87384)
+
 * Fri Feb 07 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-12
 - Rebuild for ima-evm-utils 1.6 soname bump (RHEL-65378)
 
