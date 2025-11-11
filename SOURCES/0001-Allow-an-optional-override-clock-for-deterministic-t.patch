@@ -1,0 +1,202 @@
+From 1faf306bf4f2df3e9a5d089c5cae52e6071c564a Mon Sep 17 00:00:00 2001
+From: Benno Rice <benno.rice@oracle.com>
+Date: Thu, 21 Oct 2021 22:16:55 +1100
+Subject: [PATCH] Allow an optional "override clock" for deterministic
+ timestamps
+
+When trying to achieve a fully reproducible build process for an
+OS image timestamps are a major source of variance. The RPM
+database contains two fields in package header records that
+are relevant here:
+
+- RPMTAG_INSTALLTIME which is an explicit timestamp indicating
+  when the package was installed.
+- RPMTAG_INSTALLTID which is an opaque value represending the
+  transaction ID under which a package was installed but in terms
+  of internal implementation is also a timestamp.
+
+This change allows the presence of the SOURCE_DATE_EPOCH
+environment variable, commonly used to override timestamps in
+build systems, to institute an "override time" mode in which
+values for RPMTAG_INSTALLTID and RPMTAG_INSTALLTIME become
+predicatble.
+
+(backported from commit 71456f2fc09900a027a33dc3d6d75c69a9b39488)
+---
+ lib/psm.c            |  2 +-
+ lib/rpmts.c          | 24 ++++++++++++++++++-
+ lib/rpmts_internal.h |  5 ++++
+ lib/transaction.c    |  2 +-
+ tests/rpmi.at        | 57 ++++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 87 insertions(+), 3 deletions(-)
+
+diff --git a/lib/psm.c b/lib/psm.c
+index b37e077a9..08de76764 100644
+--- a/lib/psm.c
++++ b/lib/psm.c
+@@ -553,7 +553,7 @@ static rpmRC dbAdd(rpmts ts, rpmte te)
+ {
+     Header h = rpmteHeader(te);
+     Header auxh = rpmteHeaderAux(te, 0);
+-    rpm_time_t installTime = (rpm_time_t) time(NULL);
++    rpm_time_t installTime = rpmtsGetTime(ts, 1);
+     rpmfs fs = rpmteGetFileStates(te);
+     rpm_count_t fc = rpmfsFC(fs);
+     rpm_fstate_t * fileStates = rpmfsGetStates(fs);
+diff --git a/lib/rpmts.c b/lib/rpmts.c
+index c3a0768a4..69888acfc 100644
+--- a/lib/rpmts.c
++++ b/lib/rpmts.c
+@@ -1086,6 +1086,7 @@ rpmts rpmtsCreate(void)
+ {
+     rpmts ts;
+     tsMembers tsmem;
++    char *source_date_epoch = NULL;
+ 
+     ts = xcalloc(1, sizeof(*ts));
+     memset(&ts->ops, 0, sizeof(ts->ops));
+@@ -1098,8 +1099,15 @@ rpmts rpmtsCreate(void)
+     ts->rdb = NULL;
+     ts->dbmode = O_RDONLY;
+ 
++    source_date_epoch = getenv("SOURCE_DATE_EPOCH");
++    if (source_date_epoch != NULL) {
++	ts->overrideTime = (time_t)strtol(source_date_epoch, NULL, 10);
++    } else {
++	ts->overrideTime = (time_t)-1;
++    }
++
+     ts->scriptFd = NULL;
+-    ts->tid = (rpm_tid_t) time(NULL);
++    ts->tid = (rpm_tid_t) rpmtsGetTime(ts, 0);
+ 
+     ts->color = rpmExpandNumeric("%{?_transaction_color}");
+     ts->prefcolor = rpmExpandNumeric("%{?_prefer_color}")?:2;
+@@ -1155,6 +1163,20 @@ rpmts rpmtsCreate(void)
+     return rpmtsLink(ts);
+ }
+ 
++rpm_time_t rpmtsGetTime(rpmts ts, time_t step)
++{
++    time_t tstime;
++
++    if (ts->overrideTime == (time_t)-1) {
++	tstime = time(NULL);
++    } else {
++	tstime = ts->overrideTime;
++	ts->overrideTime += step;
++    }
++
++    return (rpm_time_t)tstime;
++}
++
+ rpmtsi rpmtsiFree(rpmtsi tsi)
+ {
+     /* XXX watchout: a funky recursion segfaults here iff nrefs is wrong. */
+diff --git a/lib/rpmts_internal.h b/lib/rpmts_internal.h
+index 8105b19a6..e479f86d3 100644
+--- a/lib/rpmts_internal.h
++++ b/lib/rpmts_internal.h
+@@ -87,6 +87,8 @@ struct rpmts_s {
+     rpmtriggers trigs2run;   /*!< Transaction file triggers */
+ 
+     int min_writes;             /*!< macro minimize_writes used */
++
++    time_t overrideTime;	/*!< Time value used when overriding system clock. */
+ };
+ 
+ #ifdef __cplusplus
+@@ -123,6 +125,9 @@ RPM_GNUC_INTERNAL
+ rpmRC runScript(rpmts ts, rpmte te, Header h, ARGV_const_t prefixes,
+ 		       rpmScript script, int arg1, int arg2);
+ 
++RPM_GNUC_INTERNAL
++rpm_time_t rpmtsGetTime(rpmts ts, time_t step);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/lib/transaction.c b/lib/transaction.c
+index d547b32b6..ae1ce99f0 100644
+--- a/lib/transaction.c
++++ b/lib/transaction.c
+@@ -1491,7 +1491,7 @@ static int runTransScripts(rpmts ts, pkgGoal goal)
+ 
+ static int rpmtsSetup(rpmts ts, rpmprobFilterFlags ignoreSet)
+ {
+-    rpm_tid_t tid = (rpm_tid_t) time(NULL);
++    rpm_tid_t tid = (rpm_tid_t) rpmtsGetTime(ts, 0);
+     int dbmode = (rpmtsFlags(ts) & RPMTRANS_FLAG_TEST) ?  O_RDONLY : (O_RDWR|O_CREAT);
+ 
+     if (rpmtsFlags(ts) & RPMTRANS_FLAG_NOSCRIPTS)
+diff --git a/tests/rpmi.at b/tests/rpmi.at
+index 42dc52ba3..f09bb4c11 100644
+--- a/tests/rpmi.at
++++ b/tests/rpmi.at
+@@ -352,6 +352,63 @@ error: hello-2.0-1.x86_64: install failed
+ [])
+ AT_CLEANUP
+ 
++# ------------------------------
++# Test tid/time overrides using SOURCE_DATE_EPOCH
++AT_SETUP([rpm -i <overridden time>])
++AT_KEYWORDS([install])
++AT_CHECK([
++RPMDB_INIT
++
++pkg="hello-2.0-1.x86_64"
++timestamp=97445
++
++runroot rpm -i --ignorearch --ignoreos --nodeps \
++	/data/RPMS/foo-1.0-1.noarch.rpm
++export SOURCE_DATE_EPOCH=$timestamp
++runroot rpm -i --ignorearch --ignoreos --nodeps \
++	/data/RPMS/hello-2.0-1.x86_64.rpm
++unset SOURCE_DATE_EPOCH
++runroot rpm -q --tid $timestamp
++runroot rpm -qi $pkg | grep "Install Date"
++runroot rpm -qa
++
++],
++[0],
++[hello-2.0-1.x86_64
++Install Date: Fri Jan  2 03:04:05 1970
++foo-1.0-1.noarch
++hello-2.0-1.x86_64
++],
++[])
++AT_CLEANUP
++
++# ------------------------------
++# Test multiple installs using SOURCE_DATE_EPOCH
++AT_SETUP([rpm -i <overridden time keeps ticking>])
++AT_KEYWORDS([install])
++AT_CHECK([
++RPMDB_INIT
++
++timestamp=1445412535
++
++export SOURCE_DATE_EPOCH=$timestamp
++runroot rpm -i --ignorearch --ignoreos --nodeps \
++	/data/RPMS/foo-1.0-1.noarch.rpm /data/RPMS/hello-2.0-1.x86_64.rpm
++unset SOURCE_DATE_EPOCH
++runroot rpm -q --tid $timestamp
++for pkg in `runroot rpm -q --tid $timestamp`; do
++	runroot rpm -qi $pkg | grep "Install Date"
++done
++],
++[0],
++[hello-2.0-1.x86_64
++foo-1.0-1.noarch
++Install Date: Wed Oct 21 07:28:55 2015
++Install Date: Wed Oct 21 07:28:56 2015
++],
++[])
++AT_CLEANUP
++
+ # ------------------------------
+ # Check if rpm -U *.src.rpm works
+ AT_SETUP([rpm -U *.src.rpm])
+-- 
+2.50.1
+

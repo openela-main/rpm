@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 37
+%global rel 39
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -117,6 +117,10 @@ Patch148: 0001-Talk-about-rpmsign-in-the-rpmsign-man-page.patch
 Patch149: 0001-Allow-parametric-macros-to-opt-out-of-option-process.patch
 Patch150: 0001-Report-unsafe-symlinks-during-installation-as-a-spec.patch
 Patch151: 0002-Fix-FA_TOUCH-ed-files-getting-removed-on-failed-upda.patch
+Patch152: 0001-Fix-a-race-condition-in-brp-strip.patch
+Patch153: 0002-Store-configurable-digest-s-on-packages-from-verific.patch
+Patch154: 0003-Add-support-for-spec-local-file-attributes-and-gener.patch
+Patch155: 0001-Allow-an-optional-override-clock-for-deterministic-t.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
@@ -669,6 +673,14 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+* Wed Aug 20 2025 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-39
+- Allow an optional "override clock" for deterministic timestamps (RHEL-106672)
+
+* Wed May 07 2025 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-38
+- Add support for spec local file attributes and generators (RHEL-52772)
+- Store configurable digest(s) on packages in rpmdb (RHEL-35619)
+- Fix a hard link race condition in brp-strip (RHEL-74011)
+
 * Mon Jan 13 2025 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-37
 - Allow parametric macros to opt out of option processing (RHEL-67161)
 - Report unsafe symlinks during installation as a specific case (RHEL-33393)

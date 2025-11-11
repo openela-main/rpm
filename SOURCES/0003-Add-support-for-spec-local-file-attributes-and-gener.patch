@@ -1,0 +1,141 @@
+From 373b50299468df8222c6dd5f2e62304531886102 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Thu, 15 Feb 2024 09:26:38 +0200
+Subject: [PATCH 3/3] Add support for spec local file attributes and generators
+
+Allow declaring file attributes from the spec via %_local_file_attrs
+macro. This allows enabling file attributes and their dependency
+generators even if they are only shipped in the package itself and are
+not yet installed.
+
+The names need to be separated by colons (:).
+
+Co-authored-by: Florian Festi <ffesti@redhat.com>
+
+Backported from commits:
+d3b7b0e3280dbc66bd39cd851af32f16fd863f1b
+c167ef8bdaecdd2e306ec896c919607ba9cceb6f
+
+Fixes: RHEL-52772
+---
+ build/rpmfc.c     | 32 +++++++++++++++++++++++------
+ tests/rpmbuild.at | 52 +++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+), 6 deletions(-)
+
+diff --git a/build/rpmfc.c b/build/rpmfc.c
+index 10c380ee9..c3015ffcb 100644
+--- a/build/rpmfc.c
++++ b/build/rpmfc.c
+@@ -1115,20 +1115,40 @@ static int initAttrs(rpmfc fc)
+     ARGV_t files = NULL;
+     char * attrPath = rpmExpand("%{_fileattrsdir}/*.attr", NULL);
+     int nattrs = 0;
++    ARGV_t all_attrs = NULL;
+ 
+-    /* Discover known attributes from pathnames + initialize them */
++    /* Discover known attributes from pathnames */
+     if (rpmGlob(attrPath, NULL, &files) == 0) {
+-	nattrs = argvCount(files);
+-	fc->atypes = xcalloc(nattrs + 1, sizeof(*fc->atypes));
+-	for (int i = 0; i < nattrs; i++) {
++	int nfiles = argvCount(files);
++	for (int i = 0; i < nfiles; i++) {
+ 	    char *bn = basename(files[i]);
+ 	    bn[strlen(bn)-strlen(".attr")] = '\0';
+-	    fc->atypes[i] = rpmfcAttrNew(bn);
++	    argvAdd(&all_attrs, bn);
+ 	}
+-	fc->atypes[nattrs] = NULL;
+ 	argvFree(files);
+     }
++
++    /* Get file attributes from _local_file_attrs macro */
++    char * local_attr_names = rpmExpand("%{?_local_file_attrs}", NULL);
++    ARGV_t local_attrs = argvSplitString(local_attr_names, ":", ARGV_SKIPEMPTY);
++    int nlocals = argvCount(local_attrs);
++    for (int i = 0; i < nlocals; i++) {
++	argvAddUniq(&all_attrs, local_attrs[i]);
++    }
++
++    /* Initialize attr objects */
++    nattrs = argvCount(all_attrs);
++    fc->atypes = xcalloc(nattrs + 1, sizeof(*fc->atypes));
++
++    for (int i = 0; i < nattrs; i++) {
++	fc->atypes[i] = rpmfcAttrNew(all_attrs[i]);
++    }
++    fc->atypes[nattrs] = NULL;
++
+     free(attrPath);
++    free(local_attr_names);
++    argvFree(local_attrs);
++    argvFree(all_attrs);
+     return nattrs;
+ }
+ 
+diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
+index 2bc9c1e97..8d994ecaf 100644
+--- a/tests/rpmbuild.at
++++ b/tests/rpmbuild.at
+@@ -561,6 +561,58 @@ runroot rpm -qp --requires /build/RPMS/noarch/shebang-0.1-1.noarch.rpm|grep -v ^
+ [])
+ AT_CLEANUP
+ 
++AT_SETUP([Local dependency generator])
++AT_KEYWORDS([build])
++AT_CHECK([
++RPMDB_INIT
++
++runroot rpmbuild -bb --quiet \
++		--define '_local_file_attrs my_test_attr' \
++		--define '__my_test_attr_provides() foo(%{basename:%{1}})' \
++		--define '__my_test_attr_path .*' \
++		/data/SPECS/shebang.spec
++runroot rpm -qp --provides /build/RPMS/noarch/shebang-0.1-1.noarch.rpm|grep -v ^rpmlib
++],
++[0],
++[foo(shebang)
++shebang = 0.1-1
++],
++[])
++
++AT_CHECK([
++RPMDB_INIT
++
++runroot rpmbuild -bb --quiet \
++		--define '_local_file_attrs script' \
++		--define '__script_provides() foobar(%{basename:%{1}})' \
++		/data/SPECS/shebang.spec
++runroot rpm -qp --provides /build/RPMS/noarch/shebang-0.1-1.noarch.rpm|grep -v ^rpmlib
++],
++[0],
++[foobar(shebang)
++shebang = 0.1-1
++],
++[])
++
++AT_CHECK([
++RPMDB_INIT
++
++runroot rpmbuild -bb --quiet \
++		--define '_local_file_attrs my_test_attr:script' \
++		--define '__my_test_attr_provides() foo(%{basename:%{1}})' \
++		--define '__my_test_attr_path .*' \
++		--define '__script_provides() foobar(%{basename:%{1}})' \
++		/data/SPECS/shebang.spec
++runroot rpm -qp --provides /build/RPMS/noarch/shebang-0.1-1.noarch.rpm|grep -v ^rpmlib
++],
++[0],
++[foo(shebang)
++foobar(shebang)
++shebang = 0.1-1
++],
++[])
++AT_CLEANUP
++
+ # ------------------------------
+ # Test spec query functionality
+ AT_SETUP([rpmspec query 1])
+-- 
+2.49.0
+
