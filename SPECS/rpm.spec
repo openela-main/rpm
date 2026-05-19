@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.1.1
 #global snapver rc1
-%global baserelease 20
+%global baserelease 23
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -168,6 +168,12 @@ rpm-4.19.x-rpmkeys-add-list-erase.patch
 rpm-4.19.x-multisig.patch
 rpm-4.19.x-pqc-algo.patch
 rpm-4.19.x-pqc-fixes.patch
+
+0001-Really-allow-qualifiers-like-pre-post-meta-for-weak-.patch
+
+rpm-4.19.x-multisig-verify-fixes.patch
+rpm-4.19.x-nsswitch-enable.patch
+0001-Fix-empty-password-field-in-passwd-group-causing-ent.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -462,7 +468,7 @@ rm $RPM_BUILD_ROOT/%{rpmhome}/rpmdump
 
 %pre
 # Symlink all rpmdb files to the new location if we're still using /var/lib/rpm
-if [ -d /var/lib/rpm ]; then
+if [ ! -L /var/lib/rpm ] && [ -d /var/lib/rpm ]; then
     mkdir -p /usr/lib/sysimage/rpm
     rpmdb_files=$(find /var/lib/rpm -maxdepth 1 -type f | sed 's|^/var/lib/rpm/||g' | sort)
     for rpmdb_file in ${rpmdb_files[@]}; do
@@ -477,7 +483,7 @@ if [ -x /usr/bin/systemctl ]; then
 fi
 
 %posttrans
-if [ -d /var/lib/rpm ]; then
+if [ ! -L /var/lib/rpm ] && [ -d /var/lib/rpm ]; then
     touch /var/lib/rpm/.migratedb
 fi
 if [ ! -d /var/lib/rpm ] && [ -d /usr/lib/sysimage/rpm ] && [ ! -f /usr/lib/sysimage/rpm/.rpmdbdirsymlink_created ]; then
@@ -658,6 +664,18 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Thu Feb 05 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-23
+- Fix key import API to return NOTTRUSTED for disabled algorithms (RHEL-112394)
+
+* Tue Jan 27 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-22
+- Ignore signatures made by unknown or disabled algorithms (RHEL-112394)
+- Enable NSS-based user and group lookups again (RHEL-118365)
+- Fix ignored password field if empty in passwd/group file (RHEL-118365)
+
+* Thu Nov 27 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-21
+- Fix pre/post/meta/etc. qualifiers for weak dependencies (RHEL-101936)
+- Fix redundant rpmdb-migrate.service runs (RHEL-96510)
+
 * Tue Aug 26 2025 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-20
 - Fix rpmsign(8) man page (RHEL-109221)
 

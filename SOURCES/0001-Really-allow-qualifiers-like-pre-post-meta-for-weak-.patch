@@ -1,0 +1,118 @@
+From a382c58a59848d1a6f137ff9e2bc435ca99c31cf Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Tue, 12 Mar 2024 14:28:13 +0200
+Subject: [PATCH 1/2] Add the ability to pass qualifiers to our dependency
+ tests
+
+(cherry picked from commit 9cb05896f70ebc480f717d3f2f958e933b451a40)
+---
+ tests/data/SPECS/deptest.spec | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/tests/data/SPECS/deptest.spec b/tests/data/SPECS/deptest.spec
+index 5a1ecdc55..f7cc12df2 100644
+--- a/tests/data/SPECS/deptest.spec
++++ b/tests/data/SPECS/deptest.spec
+@@ -8,15 +8,15 @@ Summary:	Testing dependency behavior
+ Group:		Testing
+ License:	GPL
+ BuildArch:	noarch
+-%{?reqs:Requires: %{reqs}}
++%{?reqs:Requires%{?reqflags:(%{reqflags})}: %{reqs}}
+ %{?provs:Provides: %{provs}}
+ %{?cfls:Conflicts: %{cfls}}
+ %{?obs:Obsoletes: %{obs}}
+-%{?recs:Recommends: %{recs}}
+-%{?sugs:Suggests: %{sugs}}
+-%{?sups:Supplements: %{sups}}
+-%{?ens:Enhances: %{ens}}
+-%{?ord:OrderWithRequires: %{ord}}
++%{?recs:Recommends%{?recflags:(%{recflags})}: %{recs}}
++%{?sugs:Suggests%{?sugflags:(%{sugflags})}: %{sugs}}
++%{?sups:Supplements%{?supflags:(%{supflags})}: %{sups}}
++%{?ens:Enhances%{?ensflags:(%{ensflags})}: %{ens}}
++%{?ord:OrderWithRequires%{?ordflags:(%{ordflags})}: %{ord}}
+ %{?buildreqs:BuildRequires: %{buildreqs}}
+ %{?buildcfls:BuildConflicts: %{buildcfls}}
+ 
+-- 
+2.52.0
+
+
+From 480294fb8bfb8c4b0544eccc2dd47fb25999255d Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Tue, 12 Mar 2024 13:55:09 +0200
+Subject: [PATCH 2/2] Really allow qualifiers like pre/post/meta for weak
+ dependencies
+
+Commit ddbf30cf96a33319805b362b01d8a6fdfe7dea9c neglected to update the
+preamble table types for the weak dependency tags, so it never worked.
+Add a test to ensure it works and stays that way.
+
+Test depends on 078ccae5a655e044a9b867206cf4215acb3f0113
+
+Fixes: #624
+(backported from commit 0644ba5755360cd6a33caa41ea09d3e25096bc72)
+---
+ build/parsePreamble.c |  8 ++++----
+ tests/rpmbuild.at     | 18 ++++++++++--------
+ 2 files changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/build/parsePreamble.c b/build/parsePreamble.c
+index de205d5f8..3693746f8 100644
+--- a/build/parsePreamble.c
++++ b/build/parsePreamble.c
+@@ -1032,10 +1032,10 @@ static struct PreambleRec_s const preambleList[] = {
+     {RPMTAG_ICON,		0, 0, 0, LEN_AND_STR("icon")},
+     {RPMTAG_PROVIDENAME,	0, 0, 0, LEN_AND_STR("provides")},
+     {RPMTAG_REQUIRENAME,	2, 0, 0, LEN_AND_STR("requires")},
+-    {RPMTAG_RECOMMENDNAME,	0, 0, 0, LEN_AND_STR("recommends")},
+-    {RPMTAG_SUGGESTNAME,	0, 0, 0, LEN_AND_STR("suggests")},
+-    {RPMTAG_SUPPLEMENTNAME,	0, 0, 0, LEN_AND_STR("supplements")},
+-    {RPMTAG_ENHANCENAME,	0, 0, 0, LEN_AND_STR("enhances")},
++    {RPMTAG_RECOMMENDNAME,	2, 0, 0, LEN_AND_STR("recommends")},
++    {RPMTAG_SUGGESTNAME,	2, 0, 0, LEN_AND_STR("suggests")},
++    {RPMTAG_SUPPLEMENTNAME,	2, 0, 0, LEN_AND_STR("supplements")},
++    {RPMTAG_ENHANCENAME,	2, 0, 0, LEN_AND_STR("enhances")},
+     {RPMTAG_PREREQ,		2, 1, 0, LEN_AND_STR("prereq")},
+     {RPMTAG_CONFLICTNAME,	0, 0, 0, LEN_AND_STR("conflicts")},
+     {RPMTAG_OBSOLETENAME,	0, 0, 0, LEN_AND_STR("obsoletes")},
+diff --git a/tests/rpmbuild.at b/tests/rpmbuild.at
+index f98e4988f..1d61afd2f 100644
+--- a/tests/rpmbuild.at
++++ b/tests/rpmbuild.at
+@@ -753,21 +753,23 @@ RPMDB_INIT
+ runroot rpmbuild -bb --quiet \
+ 	--define "pkg weakdeps" \
+ 	--define "recs foo > 1.2.3" \
++	--define "recflags post" \
+ 	--define "sugs bar >= 0.1.2" \
+ 	--define "sups baz" \
++	--define "supflags preun" \
+ 	--define "ens zap = 3" \
+ 	  /data/SPECS/deptest.spec
+ 
+-runroot rpm -qp --recommends /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
+-runroot rpm -qp --suggests /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
+-runroot rpm -qp --supplements /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
+-runroot rpm -qp --enhances /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
++runroot rpm -qpv --recommends /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
++runroot rpm -qpv --suggests /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
++runroot rpm -qpv --supplements /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
++runroot rpm -qpv --enhances /build/RPMS/noarch/deptest-weakdeps-1.0-1.noarch.rpm
+ ],
+ [0],
+-[foo > 1.2.3
+-bar >= 0.1.2
+-baz
+-zap = 3
++[post: foo > 1.2.3
++manual: bar >= 0.1.2
++preun: baz
++manual: zap = 3
+ ],
+ [ignore])
+ RPMTEST_CLEANUP
+-- 
+2.52.0
+

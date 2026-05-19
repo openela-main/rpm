@@ -1,0 +1,474 @@
+From 2645c3421e21e844108c4258044cd8fafe551b2f Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Fri, 28 Nov 2025 11:05:47 +0200
+Subject: [PATCH 1/3] Let the system runtime environment provide users and
+ groups
+
+Rpm would prefer users and groups always provided by packages, but
+the real world is more complicated, and organizations may want to
+package software utilizing centrally managed groups for access control.
+To permit this, as the first step we need to let user() and group()
+dependencies to be provided by the system runtime environment.
+
+Add a new system provides check to dependency resolution - we only
+add user and group provides here but there are many other potential
+areas in this direction.
+
+Add a new sub-package to the klang family to have something with both
+a user and group dependency not provided by itself and adjust existing
+test for the extra output, add tests for various rpm -U and -V scenarios
+with system provided user/group.
+
+This is all "good old" C to minimize backporting effort, we'll need to
+bring this to 4.x anyhow.
+
+Related: #3994
+(backported from commit 3617d160eb6a1a8a95689db5eb5648355ea60c2a)
+---
+ lib/depends.c | 47 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/lib/depends.c b/lib/depends.c
+index d336e14d7..bb903e5a0 100644
+--- a/lib/depends.c
++++ b/lib/depends.c
+@@ -17,6 +17,7 @@
+ #include "rpmds_internal.h"
+ #include "rpmfi_internal.h" /* rpmfiles stuff for now */
+ #include "misc.h"
++#include "rpmug.h"
+ 
+ #include "backend/dbiset.h"
+ 
+@@ -680,6 +681,48 @@ exit:
+     return set1 ? set1 : dbiIndexSetNew(0);
+ }
+ 
++/* Check a string for foo(bar) style pattern, return value in parenthesis */
++static int isDep(const char *depn, size_t dlen, const char *dtype,
++		char **depval)
++{
++    size_t dtlen = strlen(dtype);
++    int rc = 0;
++
++    if (rstreqn(depn, dtype, dtlen) && depn[dlen-1] == ')') {
++	size_t l = dlen - dtlen - 1;
++	if (depval)
++	    *depval = rstrndup(depn + dtlen, l);
++	rc = 1;
++    }
++
++    return rc;
++}
++
++static int systemProvides(rpmts ts, rpmds dep)
++{
++    int rc = 1;
++    const char *dtype = NULL;
++    const char *n = rpmdsN(dep);
++    size_t nlen = strlen(n);
++    char *dval = NULL;
++
++    if (isDep(n, nlen, "user(", &dval)) {
++	uid_t uid = 0;
++	rc = rpmugUid(dval, &uid) < 0;
++	dtype = "(system user)";
++    } else if (isDep(n, nlen, "group(", &dval)) {
++	gid_t gid = 0;
++	rc = rpmugGid(dval, &gid) < 0;
++	dtype = "(system group)";
++    }
++    if (dtype)
++	rpmdsNotify(dep, dtype, rc);
++
++    free(dval);
++
++    return rc;
++}
++
+ /**
+  * Check dep for an unsatisfied dependency.
+  * @param ts		transaction set
+@@ -714,6 +757,10 @@ retry:
+ 	goto unsatisfied;
+     }
+ 
++    /* See if the runtime system provides it, similar to rpmlib provides */
++    if (systemProvides(ts, dep) == 0)
++	goto exit;
++
+     /* Dont look at pre-requisites of already installed packages */
+     if (!adding && isTransientReq(dsflags))
+ 	goto exit;
+-- 
+2.52.0
+
+
+From 33edb47b3c3e644efb3ed69f4067be8fc315f50b Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Thu, 22 Jan 2026 12:07:11 +0100
+Subject: [PATCH 2/3] Honor alternate root in system user/group provides
+
+Commit 3617d160eb6a1a8a95689db5eb5648355ea60c2a missed the --root use
+case, causing it to only ever look up users and groups on the host,
+which is of course wrong. This is because rpmtsCheck() (where this
+dependency check is done) happens well before we enter the target
+chroot.
+
+Fix that by initializing the chroot in rpmtsCheck() and adapting rpmug
+to take the target chroot into account when constructing the passwd and
+group file paths.
+
+Don't enter the chroot in rpmtsCheck(), though, as that would introduce
+the need to run test transactions as the root user and thus potentially
+break existing use cases out there. We may revisit this in the future,
+though, since technically the transaction check should be done inside
+the target chroot.
+
+Note that this new rpmug logic, much like the existing one, is based on
+the assumption that the rpmug cache is flushed across chroots. However,
+this is currently the case only when setting a new chroot, not when
+entering or leaving one, which will be fixed separately via #4093.
+
+Add a test to cover the --root use case with system provides, too.
+
+Fixes: #4094
+(backported from commit 6052d50603410d5f55f2ebdca3b88af52b32a880)
+---
+ lib/depends.c   | 5 +++++
+ lib/rpmchroot.c | 6 ++++++
+ lib/rpmchroot.h | 7 +++++++
+ lib/rpmug.c     | 9 ++++++++-
+ 4 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/lib/depends.c b/lib/depends.c
+index bb903e5a0..3503231dc 100644
+--- a/lib/depends.c
++++ b/lib/depends.c
+@@ -17,6 +17,7 @@
+ #include "rpmds_internal.h"
+ #include "rpmfi_internal.h" /* rpmfiles stuff for now */
+ #include "misc.h"
++#include "rpmchroot.h"
+ #include "rpmug.h"
+ 
+ #include "backend/dbiset.h"
+@@ -1095,6 +1096,9 @@ int rpmtsCheck(rpmts ts)
+     if (!filedepHashNumKeys(reqnotfilehash))
+ 	reqnotfilehash = filedepHashFree(reqnotfilehash);
+ 
++    /* Enable system provides lookup from the target root */
++    rpmChrootSet(rpmtsRootDir(ts));
++
+     /*
+      * Look at all of the added packages and make sure their dependencies
+      * are satisfied.
+@@ -1177,6 +1181,7 @@ int rpmtsCheck(rpmts ts)
+     }
+     rpmtsiFree(pi);
+ 
++    rpmChrootSet(NULL);
+     if (rdb)
+ 	rpmdbCtrl(rdb, RPMDB_CTRL_UNLOCK_RO);
+ 
+diff --git a/lib/rpmchroot.c b/lib/rpmchroot.c
+index ebcece6c2..eab05a00d 100644
+--- a/lib/rpmchroot.c
++++ b/lib/rpmchroot.c
+@@ -166,6 +166,12 @@ int rpmChrootOut(void)
+     return rc;
+ }
+ 
++const char *rpmChrootPath(void)
++{
++    const char *path = rootState.rootDir;
++    return (path && rstreq(path, "/")) ? NULL : path;
++}
++
+ int rpmChrootDone(void)
+ {
+     return (rootState.chrootDone > 0);
+diff --git a/lib/rpmchroot.h b/lib/rpmchroot.h
+index ba7dea504..6c5f73d33 100644
+--- a/lib/rpmchroot.h
++++ b/lib/rpmchroot.h
+@@ -16,6 +16,13 @@ extern "C" {
+ RPM_GNUC_INTERNAL
+ int rpmChrootSet(const char *rootDir);
+ 
++/** \ingroup rpmchroot
++ * Return absolute path to current chroot directory.
++ * return		chroot directory (or NULL if "/" or unset)
++ */
++RPM_GNUC_INTERNAL
++const char *rpmChrootPath(void);
++
+ /** \ingroup rpmchroot
+  * Enter chroot if necessary.
+  * return		-1 on error, 0 on success.
+diff --git a/lib/rpmug.c b/lib/rpmug.c
+index 316e326f3..7ced4dea4 100644
+--- a/lib/rpmug.c
++++ b/lib/rpmug.c
+@@ -6,6 +6,7 @@
+ #include <rpm/rpmmacro.h>
+ 
+ #include "misc.h"
++#include "rpmchroot.h"
+ #include "rpmug.h"
+ #include "debug.h"
+ 
+@@ -23,12 +24,18 @@ static __thread struct rpmug_s *rpmug = NULL;
+ static const char *getpath(const char *bn, const char *dfl, char **dest)
+ {
+     if (*dest == NULL) {
++	const char *root = rpmChrootPath();
+ 	char *s = rpmExpand("%{_", bn, "_path}", NULL);
+ 	if (*s == '%' || *s == '\0') {
+ 	    free(s);
+ 	    s = xstrdup(dfl);
+ 	}
+-	*dest = s;
++	if (root && !rpmChrootDone()) {
++	    *dest = rpmGetPath(root, s, NULL);
++	    free(s);
++	} else {
++	    *dest = s;
++	}
+     }
+     return *dest;
+ }
+-- 
+2.52.0
+
+
+From ef6765b49260c8592f4b57e07a4c87bfc0f15806 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Tue, 27 Jan 2026 12:38:33 +0100
+Subject: [PATCH 3/3] Add back support for NSS based user/group lookups
+
+Commit f3eaeeb7341085e1850e914350cf1f33d538320d eliminated NSS lookup
+completely but it perhaps went one step too far by also doing that for
+non-chroot operations where NSS may be desired, such as in enterprise
+environments with centralized user and group management and packages
+that ship files owned by such network accounts.
+
+Fix that by partially reverting the above commit. Keep NSS disabled in
+chroot operations and/or when the %_passwd_path or %_group_path macros
+are set. The latter (macros) now also serves as a tunable to explicitly
+disable NSS for users and/or groups even in non-chroot operations, and
+preserves the existing behavior on systems where these macros have been
+set, as that indicates the intent to use those specific paths.
+
+Make NSS lookups the default (again), by commenting out both macros in
+the stock configuration.
+
+This also makes "rpm --root" consistent with "systemd-sysusers --root"
+(as well as our own sysusers.sh script) which implements the same kind
+of logic when checking for the presence of users/groups before creating
+them.
+
+Commit 007b4c33a2a558fc1f062b8ceab0aeab41a36dac added a retry for the
+get*nam() calls in case of an error but there doesn't seem to be any
+obvious or documented reason for that (anymore), so don't revert that
+part for the sake of simplicity, we can always add it back later.
+
+Enable the lookup test added in previous commits now that all the pieces
+are in place.
+
+Fixes: RHEL-118365
+(backported from commit 4ce1359ebc50d305b41eec5d2f1a730f7d724e04)
+---
+ docs/man/rpm.8.md |  9 +++++++-
+ lib/rpmug.c       | 56 ++++++++++++++++++++++++++++++++++++++---------
+ macros.in         |  5 +++--
+ 3 files changed, 57 insertions(+), 13 deletions(-)
+
+diff --git a/docs/man/rpm.8.md b/docs/man/rpm.8.md
+index c9c4473fd..e909a0a7a 100644
+--- a/docs/man/rpm.8.md
++++ b/docs/man/rpm.8.md
+@@ -199,10 +199,17 @@ These options can be used in all the different modes.
+     installing, or **%prep** if building, a package) will be run after a
+     chroot(2) to *DIRECTORY*.
+ 
+-    Note that rpm assumes the environment inside the root is set up by
++    Note that **rpm** assumes the environment inside the root is set up by
+     the caller, such as any mounts needed for the operation inside the
+     root directory.
+ 
++    NSS (Name Service Switch) will *not* be used for user and group lookups in
++    package operations. Instead, **rpm** will do its own file-based lookups
++    using the **passwd**(5) and **group**(5) files in their standard locations,
++    or those configured with the **%\_passwd_path** and **%\_group_path**
++    macros, inside *DIRECTORY*. Note that, if *DIRECTORY* is */* (the forward
++    slash), NSS will be used as normal.
++
+ **-D, \--define=\'***MACRO EXPR***\'**
+ 
+ :   Defines *MACRO* with value *EXPR*.
+diff --git a/lib/rpmug.c b/lib/rpmug.c
+index 7ced4dea4..895fb50bf 100644
+--- a/lib/rpmug.c
++++ b/lib/rpmug.c
+@@ -1,5 +1,7 @@
+ #include "system.h"
+ 
++#include <pwd.h>
++#include <grp.h>
+ #include <errno.h>
+ #include <rpm/rpmlog.h>
+ #include <rpm/rpmstring.h>
+@@ -11,6 +13,7 @@
+ #include "debug.h"
+ 
+ struct rpmug_s {
++    // Empty path means use system lookup
+     char *pwpath;
+     char *grppath;
+     char *lastGname;
+@@ -28,7 +31,8 @@ static const char *getpath(const char *bn, const char *dfl, char **dest)
+ 	char *s = rpmExpand("%{_", bn, "_path}", NULL);
+ 	if (*s == '%' || *s == '\0') {
+ 	    free(s);
+-	    s = xstrdup(dfl);
++	    // Use system lookup unless chrooting
++	    s = root ? xstrdup(dfl) : xstrdup("");
+ 	}
+ 	if (root && !rpmChrootDone()) {
+ 	    *dest = rpmGetPath(root, s, NULL);
+@@ -37,7 +41,7 @@ static const char *getpath(const char *bn, const char *dfl, char **dest)
+ 	    *dest = s;
+ 	}
+     }
+-    return *dest;
++    return **dest ? *dest : NULL;
+ }
+ 
+ static const char *pwfile(void)
+@@ -177,9 +181,17 @@ int rpmugUid(const char * thisUname, uid_t * uid)
+     rpmugInit();
+ 
+     if (rpmug->lastUname == NULL || !rstreq(thisUname, rpmug->lastUname)) {
++	const char *path = pwfile();
+ 	long id;
+-	if (lookup_num(pwfile(), thisUname, 0, 2, &id))
+-	    return -1;
++	if (path) {
++	    if (lookup_num(path, thisUname, 0, 2, &id))
++		return -1;
++	} else {
++	    struct passwd *pwent = getpwnam(thisUname);
++	    if (pwent == NULL)
++		return -1;
++	    id = pwent->pw_uid;
++	}
+ 	free(rpmug->lastUname);
+ 	rpmug->lastUname = xstrdup(thisUname);
+ 	rpmug->lastUid = id;
+@@ -200,9 +212,17 @@ int rpmugGid(const char * thisGname, gid_t * gid)
+     rpmugInit();
+ 
+     if (rpmug->lastGname == NULL || !rstreq(thisGname, rpmug->lastGname)) {
++	const char *path = grpfile();
+ 	long id;
+-	if (lookup_num(grpfile(), thisGname, 0, 2, &id))
+-	    return -1;
++	if (path) {
++	    if (lookup_num(path, thisGname, 0, 2, &id))
++		return -1;
++	} else {
++	    struct group *grent = getgrnam(thisGname);
++	    if (grent == NULL)
++		return -1;
++	    id = grent->gr_gid;
++	}
+ 	free(rpmug->lastGname);
+ 	rpmug->lastGname = xstrdup(thisGname);
+ 	rpmug->lastGid = id;
+@@ -221,10 +241,18 @@ const char * rpmugUname(uid_t uid)
+     rpmugInit();
+ 
+     if (uid != rpmug->lastUid) {
++	const char *path = pwfile();
+ 	char *uname = NULL;
+ 
+-	if (lookup_str(pwfile(), uid, 2, 0, &uname))
+-	    return NULL;
++	if (path) {
++	    if (lookup_str(path, uid, 2, 0, &uname))
++		return NULL;
++	} else {
++	    struct passwd *pwent = getpwuid(uid);
++	    if (pwent == NULL)
++		return NULL;
++	    uname = pwent->pw_name;
++	}
+ 
+ 	rpmug->lastUid = uid;
+ 	free(rpmug->lastUname);
+@@ -241,10 +269,18 @@ const char * rpmugGname(gid_t gid)
+     rpmugInit();
+ 
+     if (gid != rpmug->lastGid) {
++	const char *path = grpfile();
+ 	char *gname = NULL;
+ 
+-	if (lookup_str(grpfile(), gid, 2, 0, &gname))
+-	    return NULL;
++	if (path) {
++	    if (lookup_str(path, gid, 2, 0, &gname))
++		return NULL;
++	} else {
++	    struct group *grent = getgrgid(gid);
++	    if (grent == NULL)
++		return NULL;
++	    gname = grent->gr_name;
++	}
+ 
+ 	rpmug->lastGid = gid;
+ 	free(rpmug->lastGname);
+diff --git a/macros.in b/macros.in
+index 5534f1ed7..ef413a358 100644
+--- a/macros.in
++++ b/macros.in
+@@ -133,8 +133,9 @@
+ %_keyringpath		%{_dbpath}/pubkeys/
+ 
+ # Location of passwd(5) and group(5), as : separated list
+-%_passwd_path		/etc/passwd
+-%_group_path		/etc/group
++# Uncomment to disable NSS lookups
++#%_passwd_path		/etc/passwd
++#%_group_path		/etc/group
+ 
+ # location of sysusers.d(5) directory
+ %_sysusersdir		@sysusersdir@
+-- 
+2.52.0
+
+diff -up rpm-4.19.1.1/docs/man/rpm.8.orig rpm-4.19.1.1/docs/man/rpm.8
+--- rpm-4.19.1.1/docs/man/rpm.8.orig	2026-01-28 13:18:58.025706793 +0100
++++ rpm-4.19.1.1/docs/man/rpm.8	2026-01-28 13:18:49.367626076 +0100
+@@ -185,9 +185,18 @@ if installing, or \f[B]%prep\f[R] if bui
+ after a chroot(2) to \f[I]DIRECTORY\f[R].
+ .RS
+ .PP
+-Note that rpm assumes the environment inside the root is set up by the
+-caller, such as any mounts needed for the operation inside the root
+-directory.
++Note that \f[B]rpm\f[R] assumes the environment inside the root is set
++up by the caller, such as any mounts needed for the operation inside the
++root directory.
++.PP
++NSS (Name Service Switch) will \f[I]not\f[R] be used for user and group
++lookups in package operations.
++Instead, \f[B]rpm\f[R] will do its own file-based lookups using the
++\f[B]passwd\f[R](5) and \f[B]group\f[R](5) files in their standard
++locations, or those configured with the \f[B]%_passwd_path\f[R] and
++\f[B]%_group_path\f[R] macros, inside \f[I]DIRECTORY\f[R].
++Note that, if \f[I]DIRECTORY\f[R] is \f[I]/\f[R] (the forward slash),
++NSS will be used as normal.
+ .RE
+ .TP
+ \f[B]-D, --define=\[aq]\f[R]\f[I]MACRO EXPR\f[R]\f[B]\[aq]\f[R]
