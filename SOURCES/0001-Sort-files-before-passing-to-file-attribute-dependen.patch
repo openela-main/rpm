@@ -1,0 +1,61 @@
+From 08d5e162c2ec3a415a5e657fd8b63f0cdf14ddd8 Mon Sep 17 00:00:00 2001
+From: Chris Riches <chris.riches@nutanix.com>
+Date: Thu, 5 Jun 2025 09:47:02 +0000
+Subject: [PATCH] Sort files before passing to file attribute dependency
+ generators
+
+The fc->fahash map is constructed in parallel, and so ends up with
+non-deterministic ordering of files. Passing this unordered list through
+to file attribute dependency generators can therefore result in
+non-reproducible RPM builds.
+
+In theory, a file attribute generator should only care about each
+individual file it is given, and so the order should not matter.
+However, some generators track state in-between files and so this
+property does not hold. Notably, the python3-rpm-generators in RHEL
+(ab)use this system to apply package-level dependencies that are based
+on the package name rather than the content of any particular file, and
+simply apply this to the first file that they see from a matching
+package. Therefore, different input file orderings will result in
+different files getting the dependency, and therefore different output
+RPMs.
+
+To avoid this, sort the files before passing them to the generators.
+Since the fc->fn array is already sorted by filename, we just need to
+sort the list of indices into that array.
+
+(backported from commit bc0b94026bc5651435819043394cbe9a766a4fd5)
+---
+ build/rpmfc.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/build/rpmfc.c b/build/rpmfc.c
+index c3015ffcb..b5fb611db 100644
+--- a/build/rpmfc.c
++++ b/build/rpmfc.c
+@@ -1010,6 +1010,13 @@ static const struct applyDep_s applyDepTable[] = {
+     { 0, 0, NULL },
+ };
+ 
++static int compareInts(const void *a, const void *b)
++{
++    int ia = *((int*)a);
++    int ib = *((int*)b);
++    return ia > ib ? 1 : ia < ib ? -1 : 0;
++}
++
+ static int applyAttr(rpmfc fc, int aix, const char *aname,
+ 			const struct exclreg_s *excl,
+ 			const struct applyDep_s *dep)
+@@ -1032,6 +1039,8 @@ static int applyAttr(rpmfc fc, int aix, const char *aname,
+ 
+ 	if (!rstreq(cmd, "")) {
+ 	    char *ns = rpmfcAttrMacro(aname, "namespace", NULL);
++	    /* Sort for reproducibility - hashmap was constructed in parallel */
++	    qsort(ixs, n, sizeof(*ixs), compareInts);
+ 	    for (int i = 0; i < n; i++) {
+ 		if (rpmfcHelper(fc, ixs[i], excl, dep->type, dep->tag,
+ 				ns, cmd, callable))
+-- 
+2.51.1
+
