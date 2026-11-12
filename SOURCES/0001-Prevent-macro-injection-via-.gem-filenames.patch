@@ -1,0 +1,45 @@
+From b2882f8d603b4f3dc34add68eeff296d3d0a1c3a Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Wed, 21 Oct 2026 13:43:03 +0200
+Subject: [PATCH] Prevent macro injection via .gem filenames
+
+When unpacking a GEM archive, its basename gets macro-expanded via
+rpmGetPath(), which allows for RPM macro injection via a crafted
+filename.
+
+Fix that by appending the .gemspec suffix in the subsequent rasprintf()
+call instead of using rpmGetPath() for it.
+
+Enable the respective test as well.
+
+Fixes: CVE-2026-84233
+---
+ tools/rpmuncompress.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/tools/rpmuncompress.c b/tools/rpmuncompress.c
+index e555e0dd7..c0a4908ea 100644
+--- a/tools/rpmuncompress.c
++++ b/tools/rpmuncompress.c
+@@ -211,16 +211,13 @@ static char *doUntar(archiveType *at, int sr, const char *fn, const char *arg)
+ 	    const char *bn = basename(tmp);
+ 	    size_t nvlen = strlen(bn) - 3;
+ 	    char *gem = rpmGetPath("%{__gem}", NULL);
+-	    char *gemspec = NULL;
+ 	    char gemnameversion[nvlen];
+ 
+ 	    rstrlcpy(gemnameversion, bn, nvlen);
+-	    gemspec = rpmGetPath("", gemnameversion, ".gemspec", NULL);
+ 
+-	    rasprintf(&buf, "%s %s && %s spec %s --ruby > '%s'",
+-			zipper, arg, gem, arg, gemspec);
++	    rasprintf(&buf, "%s %s && %s spec %s --ruby > '%s.gemspec'",
++			zipper, arg, gem, arg, gemnameversion);
+ 
+-	    free(gemspec);
+ 	    free(gem);
+ 	    free(tmp);
+ 	} else {
+-- 
+2.56.0
+

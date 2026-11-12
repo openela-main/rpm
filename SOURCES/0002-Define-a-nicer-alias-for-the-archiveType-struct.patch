@@ -1,0 +1,77 @@
+From f2fe515e29b97cdcf7f03b06220982171105dd30 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Fri, 25 Sep 2026 13:16:13 +0200
+Subject: [PATCH 2/4] Define a nicer alias for the archiveType struct
+
+We are going to use this type in a quite bit more places in the next
+commits, so make it shorter.
+
+No functional change.
+
+(cherry picked from commit 8d532fe23f37d23cff30b514ca40ff232410787a)
+---
+ tools/rpmuncompress.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/tools/rpmuncompress.c b/tools/rpmuncompress.c
+index 245d86ed9..d355b736d 100644
+--- a/tools/rpmuncompress.c
++++ b/tools/rpmuncompress.c
+@@ -34,7 +34,7 @@ static struct poptOption optionsTable[] = {
+     POPT_TABLEEND
+ };
+ 
+-struct archiveType_s {
++typedef const struct archiveType_s {
+     int compressed;
+     int extractable;
+     const char *cmd;
+@@ -42,7 +42,9 @@ struct archiveType_s {
+     const char *quiet;
+     const char *dest;
+     int setTZ;
+-} archiveTypes[] = {
++} archiveType;
++
++static archiveType const archiveTypes[] = {
+     { COMPRESSED_NOT,	0,	"%{__cat}" ,	"",		"", "", 0 },
+     { COMPRESSED_OTHER,	0,	"%{__gzip}",	"-dc",		"", "", 0 },
+     { COMPRESSED_BZIP2,	0,	"%{__bzip2}",	"-dc",		"", "", 0 },
+@@ -57,13 +59,13 @@ struct archiveType_s {
+     { -1,		0,	NULL,		NULL,		NULL, 0 },
+ };
+ 
+-static const struct archiveType_s *getArchiver(const char *fn)
++static archiveType *getArchiver(const char *fn)
+ {
+-    const struct archiveType_s *archiver = NULL;
++    archiveType *archiver = NULL;
+     rpmCompressedMagic compressed = COMPRESSED_NOT;
+ 
+     if (rpmFileIsCompressed(fn, &compressed) == 0) {
+-	for (const struct archiveType_s *at = archiveTypes; at->cmd; at++) {
++	for (archiveType *at = archiveTypes; at->cmd; at++) {
+ 	    if (compressed == at->compressed) {
+ 		archiver = at;
+ 		break;
+@@ -77,7 +79,7 @@ static const struct archiveType_s *getArchiver(const char *fn)
+ static char *doUncompress(const char *fn)
+ {
+     char *cmd = NULL;
+-    const struct archiveType_s *at = getArchiver(fn);
++    archiveType *at = getArchiver(fn);
+     if (at) {
+ 	cmd = rpmExpand(at->setTZ ? "TZ=UTC " : "",
+ 			at->cmd, " ", at->unpack, NULL);
+@@ -152,7 +154,7 @@ afree:
+ 
+ static char *doUntar(const char *fn)
+ {
+-    const struct archiveType_s *at = NULL;
++    archiveType *at = NULL;
+     char *buf = NULL;
+     char *tar = NULL;
+     const char *taropts = verbose ? "-xvvof" : "-xof";
+-- 
+2.56.0
+

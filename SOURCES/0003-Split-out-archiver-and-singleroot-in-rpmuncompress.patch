@@ -1,0 +1,90 @@
+From 7513fd71e1ce84e1f64b3d29e6de8089f0fd01d9 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Mon, 14 Sep 2026 16:42:13 +0200
+Subject: [PATCH 3/4] Split out archiver and singleroot in rpmuncompress
+
+Do the archiver and singleroot detection in main(), before calling the
+doUncompress() or doUntar() functions, and pass both instances to them
+instead. This will allow us to re-run these two functions more cheaply,
+which will be done in the next commits.
+
+No functional change.
+
+(backported from commit 799bb0cc898b85b0cbb5048fde4dd66bccdcf0de)
+---
+ tools/rpmuncompress.c | 23 +++++++++++++++--------
+ 1 file changed, 15 insertions(+), 8 deletions(-)
+
+diff --git a/tools/rpmuncompress.c b/tools/rpmuncompress.c
+index d355b736d..249bcfa3a 100644
+--- a/tools/rpmuncompress.c
++++ b/tools/rpmuncompress.c
+@@ -76,10 +76,9 @@ static archiveType *getArchiver(const char *fn)
+     return archiver;
+ }
+ 
+-static char *doUncompress(const char *fn)
++static char *doUncompress(archiveType *at, const char *fn)
+ {
+     char *cmd = NULL;
+-    archiveType *at = getArchiver(fn);
+     if (at) {
+ 	cmd = rpmExpand(at->setTZ ? "TZ=UTC " : "",
+ 			at->cmd, " ", at->unpack, NULL);
+@@ -152,9 +151,8 @@ afree:
+ 	return ret;
+ }
+ 
+-static char *doUntar(const char *fn)
++static char *doUntar(archiveType *at, int sr, const char *fn)
+ {
+-    archiveType *at = NULL;
+     char *buf = NULL;
+     char *tar = NULL;
+     const char *taropts = verbose ? "-xvvof" : "-xof";
+@@ -162,14 +160,12 @@ static char *doUntar(const char *fn)
+     char *stripcd = NULL;
+     int needtar = 0;
+ 
+-    if ((at = getArchiver(fn)) == NULL)
++    if (at == NULL)
+ 	goto exit;
+ 
+     needtar = (at->extractable == 0);
+ 
+     if (dstpath) {
+-	int sr = singleRoot(fn);
+-
+ 	/* if the archive has multiple entries, just extract it into the
+ 	 * specified destination path, otherwise also strip the first path
+ 	 * entry
+@@ -246,6 +242,9 @@ int main(int argc, char *argv[])
+     int ec = EXIT_FAILURE;
+     poptContext optCon = NULL;
+     const char *arg = NULL;
++    char *cmd = NULL;
++    archiveType *at = NULL;
++    int sr = 0;
+ 
+     optCon = rpmcliInit(argc, argv, optionsTable);
+ 
+@@ -254,7 +253,15 @@ int main(int argc, char *argv[])
+ 	goto exit;
+     }
+ 
+-    char *cmd = extract ? doUntar(arg) : doUncompress(arg);
++    at = getArchiver(arg);
++    if (extract) {
++	if (dstpath)
++	    sr = singleRoot(arg);
++	cmd = doUntar(at, sr, arg);
++    } else {
++	cmd = doUncompress(at, arg);
++    }
++
+     if (cmd) {
+ 	FILE *inp = NULL;
+ 
+-- 
+2.56.0
+

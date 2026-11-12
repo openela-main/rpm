@@ -1,0 +1,97 @@
+From c0e4c08533e3e899d7e1cc0d9885e83ea1e1bdfb Mon Sep 17 00:00:00 2001
+From: Dave Cantrell <dcantrell@redhat.com>
+Date: Mon, 20 Apr 2026 15:05:04 -0400
+Subject: [PATCH] Prevent buffer overruns in findPreambleTag() for language
+ string
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This is technically possible and there is a reproducer for it, but I
+would not consider this a critical problem.  If you have a really long
+language identifier string in a preamble tag and it's larger than
+BUFSIZ on the platform, you get a SIGSEGV.  Not a surprise.
+
+In spec files you can have stuff like this in the preamble:
+
+    Summary: Here is a short summary
+    Summary(de): Hier ist eine kurze Zusammenfassung
+    Summary(eo): Jen mallonga resumo
+    Summary(Elvish): Sí na- a estent summarui
+    Summary(ga_ie): Is coimriú ghearr é seo
+    Summary(Klingon): naDev 'oH ngaj summary
+
+And findPreambleTag() is eventually called to pick up those language
+identifiers in parens.  Usually the identifiers are two characters,
+but sometimes they are three or four.  The parser in the library scans
+a character at a time until it hits the closing paren and just stuffs
+it all in the 'lang' buffer.  The problem is that buffer is BUFSIZ and
+there is no bounds checking to see if the string in the spec file in
+parens is larger than what BUFSIZ can hold.  So it is technically
+possible to provide a spec file with a completely useless huge string
+as a language identifier that then crashes the spec file parser.
+
+This patch adds some bounds checking to that reading loop to prevent
+this incredibly rare yet technically possible issue.  I don't bother
+growing the buffer if we're still reading characters because honestly
+if we have more than BUFSIZ in parens, we've got a garbage spec file.
+
+The patch does ensure the unused space in BUFSIZ is NULL and that the
+lang buffer is NULL terminated so it's moderately useful in later
+parts of the code.
+
+Signed-off-by: Dave Cantrell <dcantrell@redhat.com>
+(backported from commit b6f2cc52fcc7eedf0095c2bf0495e4b6aafd87cb)
+---
+ build/parsePreamble.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/build/parsePreamble.c b/build/parsePreamble.c
+index 3693746f8..e14664939 100644
+--- a/build/parsePreamble.c
++++ b/build/parsePreamble.c
+@@ -1064,10 +1064,11 @@ static struct PreambleRec_s const preambleList[] = {
+ /**
+  */
+ static int findPreambleTag(rpmSpec spec,rpmTagVal * tag,
+-		const char ** macro, char * lang)
++		const char ** macro, char * lang, size_t langsize)
+ {
+     PreambleRec p;
+     char *s;
++    size_t l = 0;
+ 
+     for (p = preambleList; p->token != NULL; p++) {
+ 	if (!(p->token && !rstrncasecmp(spec->line, p->token, p->len)))
+@@ -1097,14 +1098,17 @@ static int findPreambleTag(rpmSpec spec,rpmTagVal * tag,
+     case 2:
+ 	if (*s == ':') {
+ 	    /* Type 1 is multilang, 2 is qualifiers with no defaults */
+-	    strcpy(lang, (p->type == 1) ? RPMBUILD_DEFAULT_LANG : "");
++	    rstrlcpy(lang, (p->type == 1) ? RPMBUILD_DEFAULT_LANG : "", langsize);
++	    l = strlen(lang);
+ 	    break;
+ 	}
+ 	if (*s != '(') return 1;
+ 	s++;
+ 	SKIPSPACE(s);
+-	while (!risspace(*s) && *s != ')')
++	while (!risspace(*s) && *s != ')' && l < (langsize - 1)) {
+ 	    *lang++ = *s++;
++	    l++;
++	}
+ 	*lang = '\0';
+ 	SKIPSPACE(s);
+ 	if (*s != ')') return 1;
+@@ -1173,7 +1177,7 @@ int parsePreamble(rpmSpec spec, int initialPackage)
+ 	    linep = spec->line;
+ 	    SKIPSPACE(linep);
+ 	    if (*linep != '\0') {
+-		if (findPreambleTag(spec, &tag, &macro, lang)) {
++		if (findPreambleTag(spec, &tag, &macro, lang, sizeof(lang))) {
+ 		    if (spec->lineNum == 1 &&
+ 			(unsigned char)(spec->line[0]) == 0xed &&
+ 			(unsigned char)(spec->line[1]) == 0xab &&
+-- 
+2.54.0
+

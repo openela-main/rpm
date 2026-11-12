@@ -1,0 +1,110 @@
+From 254716f8dbf1200bc75133417cc704efdc55f0d6 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Thu, 22 Oct 2026 09:53:55 +0200
+Subject: [PATCH 2/5] Let callers pass the basename to doUntar()
+
+No functional change, just preparing the ground for the next commits.
+
+Backported from commit 41f53717ec4c3e16ab6fb18d032d17fcfcb97781:
+
+Add a plain C variant of std::filesystem::path::stem() that allocates
+the basename on the heap, for consistency with the surrounding code.
+---
+ tools/rpmuncompress.c | 32 +++++++++++++++++++++-----------
+ 1 file changed, 21 insertions(+), 11 deletions(-)
+
+diff --git a/tools/rpmuncompress.c b/tools/rpmuncompress.c
+index 8b60c718d..923e66db2 100644
+--- a/tools/rpmuncompress.c
++++ b/tools/rpmuncompress.c
+@@ -152,7 +152,7 @@ afree:
+ 	return ret;
+ }
+ 
+-static char *doUntar(archiveType *at, int sr, const char *fn, const char *arg)
++static char *doUntar(archiveType *at, int sr, const char *bn, const char *arg)
+ {
+     char *buf = NULL;
+     char *tar = NULL;
+@@ -207,19 +207,12 @@ static char *doUntar(archiveType *at, int sr, const char *fn, const char *arg)
+ 	if (needtar) {
+ 	    rasprintf(&buf, "%s %s %s | %s %s - %s", mkdir, zipper, arg, tar, taropts, stripcd);
+ 	} else if (at->compressed == COMPRESSED_GEM) {
+-	    char *tmp = xstrdup(fn);
+-	    const char *bn = basename(tmp);
+-	    size_t nvlen = strlen(bn) - 3;
+ 	    char *gem = rpmGetPath("%{__gem}", NULL);
+-	    char gemnameversion[nvlen];
+-
+-	    rstrlcpy(gemnameversion, bn, nvlen);
+ 
+ 	    rasprintf(&buf, "%s %s && %s spec %s --ruby > '%s.gemspec'",
+-			zipper, arg, gem, arg, gemnameversion);
++			zipper, arg, gem, arg, bn);
+ 
+ 	    free(gem);
+-	    free(tmp);
+ 	} else {
+ 	    rasprintf(&buf, "%s%s %s %s", mkdir, zipper, arg, stripcd);
+ 	}
+@@ -235,12 +228,27 @@ exit:
+     return buf;
+ }
+ 
++/* Return the basename of the given filename, stripped of its suffix. */
++static char *getStem(const char *fn)
++{
++    char *tmp = xstrdup(fn);
++    const char *bn = basename(tmp);
++    size_t stemlen = strlen(bn) - 3;
++    char *stem = xmalloc(stemlen);
++
++    rstrlcpy(stem, bn, stemlen);
++    free(tmp);
++
++    return stem;
++}
++
+ int main(int argc, char *argv[])
+ {
+     int ec = EXIT_FAILURE;
+     poptContext optCon = NULL;
+     const char *arg = NULL;
+     const char *fnarg = "\"$1\"";
++    char *bn = NULL;
+     char *cmd = NULL;
+     archiveType *at = NULL;
+     int sr = 0;
+@@ -253,10 +261,11 @@ int main(int argc, char *argv[])
+     }
+ 
+     at = getArchiver(arg);
++    bn = getStem(arg);
+     if (extract) {
+ 	if (dstpath)
+ 	    sr = singleRoot(arg);
+-	cmd = doUntar(at, sr, arg, fnarg);
++	cmd = doUntar(at, sr, bn, fnarg);
+     } else {
+ 	cmd = doUncompress(at, arg, fnarg);
+     }
+@@ -268,7 +277,7 @@ int main(int argc, char *argv[])
+ 	    char *dryarg = NULL;
+ 	    char *drycmd = NULL;
+ 	    rasprintf(&dryarg, "'%s'", arg);
+-	    drycmd = extract ? doUntar(at, sr, arg, dryarg) :
++	    drycmd = extract ? doUntar(at, sr, bn, dryarg) :
+ 			       doUncompress(at, arg, dryarg);
+ 	    fprintf(stderr, "%s\n", drycmd);
+ 	    free(drycmd);
+@@ -292,6 +301,7 @@ int main(int argc, char *argv[])
+     }
+ 
+ exit:
++    free(bn);
+     free(cmd);
+     rpmcliFini(optCon);
+     return ec;
+-- 
+2.56.0
+

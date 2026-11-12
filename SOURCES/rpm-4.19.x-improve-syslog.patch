@@ -1,0 +1,699 @@
+From 76be5b707d1d55388bcb6bd77c8cc351152612de Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 8 Apr 2026 10:40:39 +0300
+Subject: [PATCH 1/6] Fix wrong operation names used in the syslog plugin
+
+There are more rpmte types than just TR_ADDED and TR_REMOVED these days,
+but this code was never updated to match. As a result, it'll log
+anything but installs (such as --restore) as erasure which can be a
+little hair-raising when looking at the log.
+
+Fixes: #4172
+(cherry picked from commit bbba5b986ff468badb49a822bd70b68dcf606cef)
+---
+ plugins/syslog.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/plugins/syslog.c b/plugins/syslog.c
+index f7b1a1388..2dac9872f 100644
+--- a/plugins/syslog.c
++++ b/plugins/syslog.c
+@@ -74,13 +74,24 @@ static rpmRC syslog_tsm_post(rpmPlugin plugin, rpmts ts, int res)
+     return RPMRC_OK;
+ }
+ 
++static const char *getOp(rpmte te)
++{
++    switch (rpmteType(te)) {
++    case TR_ADDED:	return "install";
++    case TR_REMOVED:	return "erase";
++    case TR_RPMDB:	return "rpmdb";
++    case TR_RESTORED:	return "restore";
++    }
++    return "<unknown>";
++}
++
+ static rpmRC syslog_psm_post(rpmPlugin plugin, rpmte te, int res)
+ {
+     struct logstat * state = rpmPluginGetData(plugin);
+ 
+     if (state->logging) {
+ 	int lvl = LOG_NOTICE;
+-	const char *op = (rpmteType(te) == TR_ADDED) ? "install" : "erase";
++	const char *op = getOp(te);
+ 	const char *outcome = "success";
+ 	/* XXX: Permit configurable header queryformat? */
+ 	const char *pkg = rpmteNEVRA(te);
+-- 
+2.54.0
+
+
+From fc5c083b06ae1b24c879c8db3e4af5d57074700a Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 15 Apr 2026 16:29:31 +0300
+Subject: [PATCH 2/6] Use a sane identity string for syslog
+
+The old "[RPM]" string is a PITA to grep for and annoying with journalctl
+too. Lets just use plain "rpm" to reduce friction. And with that,
+"journalctl -t rpm" is actually a pretty handy way to look at the
+transaction history.
+
+In theory, this could of course break somebody's scripts. But
+considering how broken the output has been without anybody complaining,
+it suggests nobody is actually using this plugin and so, changing cannot
+hurt.
+
+(cherry picked from commit 099128396c2a78cc2ca576be7c98dc269d11a457)
+---
+ plugins/syslog.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/plugins/syslog.c b/plugins/syslog.c
+index 2dac9872f..e05a9b4d1 100644
+--- a/plugins/syslog.c
++++ b/plugins/syslog.c
+@@ -16,7 +16,7 @@ struct logstat {
+ static rpmRC syslog_init(rpmPlugin plugin, rpmts ts)
+ {
+     /* XXX make this configurable? */
+-    const char * log_ident = "[RPM]";
++    const char * log_ident = "rpm";
+     struct logstat * state = rcalloc(1, sizeof(*state));
+ 
+     rpmPluginSetData(plugin, state);
+-- 
+2.54.0
+
+
+From 91d39dbbbed2ad5537551aef5dd3bd6d65510bec Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 15 Apr 2026 13:53:57 +0300
+Subject: [PATCH 3/6] Add + use an internal macro for determining script-only
+ install goals
+
+No functional changes, but we'll need this info in another spot in
+the next commit.
+
+(cherry picked from commit bfefc137eb2d24c76858cc131b998a9fac99a679)
+---
+ lib/rpmte.c          | 2 +-
+ lib/rpmte_internal.h | 2 ++
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/lib/rpmte.c b/lib/rpmte.c
+index 657b4e11d..3802aeaec 100644
+--- a/lib/rpmte.c
++++ b/lib/rpmte.c
+@@ -815,7 +815,7 @@ int rpmteAddOp(rpmte te)
+ int rpmteProcess(rpmte te, pkgGoal goal, int num)
+ {
+     /* Only install/erase resets pkg file info */
+-    int scriptstage = (goal != PKG_INSTALL && goal != PKG_ERASE && goal != PKG_RESTORE);
++    int scriptstage = isScriptStage(goal);
+     int test = (rpmtsFlags(te->ts) & RPMTRANS_FLAG_TEST);
+     int reset_fi = (scriptstage == 0 && test == 0);
+     int failed = 1;
+diff --git a/lib/rpmte_internal.h b/lib/rpmte_internal.h
+index e616c0561..881772c95 100644
+--- a/lib/rpmte_internal.h
++++ b/lib/rpmte_internal.h
+@@ -22,6 +22,8 @@ typedef enum pkgGoal_e {
+     PKG_TRANSFILETRIGGERUN	= RPMTAG_TRANSFILETRIGGERUN,
+ } pkgGoal;
+ 
++#define isScriptStage(_g) ((_g) != PKG_INSTALL && (_g) != PKG_ERASE && (_g) != PKG_RESTORE)
++
+ /** \ingroup rpmte
+  * Transaction element ordering chain linkage.
+  */
+-- 
+2.54.0
+
+
+From 38e1fedd72cb14b9bf8e0a428a79071eb0e510dc Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 15 Apr 2026 13:59:16 +0300
+Subject: [PATCH 4/6] Only execute psm_pre and psm_post for the main package
+ operation
+
+These hooks getting called multiple times with no means to identify
+why it's getting called makes them impossible to use meaningfully.
+Only run the psm hooks on non-script goals: install, erase and restore.
+
+It is of course a change to what is now a public API semantics,
+but the former behavior is really a bug that we're fixing here.
+
+With this change, the syslog plugin no longer emits duplicates and
+in a strange order at that.
+
+Fixes: #1254
+(backported from commit 0a45aefa01d1517184c41f233f4b53cebd78cf8d)
+---
+ docs/manual/plugins.md | 2 +-
+ lib/psm.c              | 7 ++++---
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/docs/manual/plugins.md b/docs/manual/plugins.md
+index e53eb9e3d..b34c182f4 100644
+--- a/docs/manual/plugins.md
++++ b/docs/manual/plugins.md
+@@ -44,7 +44,7 @@ Post hook is guaranteed to execute whenever pre hook was executed.
+ 
+ ## Per transaction element hooks
+ 
+-Hooks `psm_pre` and `psm_post` occur before and after the processing of single transaction element within the transaction. Both hooks can get executed multiple times for a single element as these hooks get called separately for %pretrans and %posttrans scriptlets in addition to the main package install or erase action.
++Hooks `psm_pre` and `psm_post` occur before and after the processing of single transaction element within the transaction during install, erase and restore operations.
+ 
+ Post hook is guaranteed to execute whenever pre hook was executed.
+ 
+diff --git a/lib/psm.c b/lib/psm.c
+index 39261b9f4..820704cab 100644
+--- a/lib/psm.c
++++ b/lib/psm.c
+@@ -1118,7 +1118,8 @@ static rpmRC runGoal(rpmpsm psm, pkgGoal goal)
+ rpmRC rpmpsmRun(rpmts ts, rpmte te, pkgGoal goal)
+ {
+     rpmpsm psm = NULL;
+-    rpmRC rc = RPMRC_FAIL;
++    rpmRC rc = RPMRC_OK;
++    int runplugins = (isScriptStage(goal) == 0);
+ 
+     /* Psm can't fail in test mode, just return early */
+     if (rpmtsFlags(ts) & RPMTRANS_FLAG_TEST)
+@@ -1126,7 +1127,7 @@ rpmRC rpmpsmRun(rpmts ts, rpmte te, pkgGoal goal)
+ 
+     psm = rpmpsmNew(ts, te, goal);
+     /* Run pre transaction element hook for all plugins */
+-    if (rpmChrootIn() == 0) {
++    if (runplugins && rpmChrootIn() == 0) {
+ 	rc = rpmpluginsCallPsmPre(rpmtsPlugins(ts), te);
+ 	rpmChrootOut();
+     }
+@@ -1135,7 +1136,7 @@ rpmRC rpmpsmRun(rpmts ts, rpmte te, pkgGoal goal)
+ 	rc = runGoal(psm, goal);
+ 
+     /* Run post transaction element hook for all plugins (even on failure) */
+-    if (rpmChrootIn() == 0) {
++    if (runplugins && rpmChrootIn() == 0) {
+ 	rpmpluginsCallPsmPost(rpmtsPlugins(ts), te, rc);
+ 	rpmChrootOut();
+     }
+-- 
+2.54.0
+
+
+From 4f85d8cf98e67200f82a6cef666d6bfecb084f21 Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 20 May 2026 16:33:02 +0300
+Subject: [PATCH 5/6] Add a configurable output target to the syslog plugin
+
+Allow optionally redirecting the plugin output to stderr instead of
+the actual syslog. We'll need this in the next commit to make testing
+actually feasible.
+
+(backported from commit fbf4d588458700da25f193770d10a3632c2c4836)
+---
+ docs/man/rpm-plugin-syslog.8.md |  9 +++++--
+ plugins/syslog.c                | 43 +++++++++++++++++++++++++++------
+ 2 files changed, 43 insertions(+), 9 deletions(-)
+
+diff --git a/docs/man/rpm-plugin-syslog.8.md b/docs/man/rpm-plugin-syslog.8.md
+index e9fa48e1b..47a6bc549 100644
+--- a/docs/man/rpm-plugin-syslog.8.md
++++ b/docs/man/rpm-plugin-syslog.8.md
+@@ -18,8 +18,13 @@ The plugin writes basic information about rpm transactions to the syslog
+ Configuration
+ =============
+ 
+-There are currently no options for this plugin in particular. See
+-**rpm-plugins**(8) on how to control plugins in general.
++**%\_\_transaction\_syslog\_target**
++:   Specify target output for the plugin. Supported values are:
++
++    - **syslog**: system log (default)
++    - **stderr**: standard error
++
++See **rpm-plugins**(8) on how to control plugins in general.
+ 
+ SEE ALSO
+ ========
+diff --git a/plugins/syslog.c b/plugins/syslog.c
+index e05a9b4d1..5db295f4b 100644
+--- a/plugins/syslog.c
++++ b/plugins/syslog.c
+@@ -1,34 +1,63 @@
+ #include "system.h"
+ 
++#include <stdarg.h>
+ #include <stdlib.h>
+ #include <syslog.h>
+ 
++#include <rpm/rpmlog.h>
++#include <rpm/rpmmacro.h>
+ #include <rpm/rpmstring.h>
+ #include <rpm/rpmts.h>
+ #include "rpmplugin.h"
+ 
++typedef void (*loggerfunc)(int prio, const char *fmt, ...);
++
+ struct logstat {
+     int logging;
+     unsigned int scriptfail;
+     unsigned int pkgfail;
++    loggerfunc log;
+ };
+ 
++static void errlog(int prio, const char *fmt, ...)
++{
++    va_list ap;
++
++    va_start(ap, fmt);
++    vfprintf(stderr, fmt, ap);
++    fprintf(stderr, "\n");
++    va_end(ap);
++}
++
+ static rpmRC syslog_init(rpmPlugin plugin, rpmts ts)
+ {
+     /* XXX make this configurable? */
+     const char * log_ident = "rpm";
+     struct logstat * state = rcalloc(1, sizeof(*state));
++    char *target = rpmExpand("%{?__transaction_syslog_target}", NULL);
++
++    if (rstreq(target, "stderr")) {
++	state->log = errlog;
++    } else {
++	if (*target && !rstreq(target, "syslog")) {
++	    rpmlog(RPMLOG_WARNING,
++		_("unknown syslog target %s, using 'syslog'\n"), target);
++	}
++	state->log = syslog;
++	openlog(log_ident, (LOG_PID), LOG_USER);
++    }
+ 
+     rpmPluginSetData(plugin, state);
+-    openlog(log_ident, (LOG_PID), LOG_USER);
++    free(target);
+     return RPMRC_OK;
+ }
+ 
+ static void syslog_cleanup(rpmPlugin plugin)
+ {
+     struct logstat * state = rpmPluginGetData(plugin);
++    if (state->log == syslog)
++	closelog();
+     free(state);
+-    closelog();
+ }
+ 
+ static rpmRC syslog_tsm_pre(rpmPlugin plugin, rpmts ts)
+@@ -51,7 +80,7 @@ static rpmRC syslog_tsm_pre(rpmPlugin plugin, rpmts ts)
+ 	state->logging = 0;
+ 
+     if (state->logging) {
+-	syslog(LOG_NOTICE, "Transaction ID %x started", rpmtsGetTid(ts));
++	state->log(LOG_NOTICE, "Transaction ID %x started", rpmtsGetTid(ts));
+     }
+ 
+     return RPMRC_OK;
+@@ -63,10 +92,10 @@ static rpmRC syslog_tsm_post(rpmPlugin plugin, rpmts ts, int res)
+ 
+     if (state->logging) {
+ 	if (state->pkgfail || state->scriptfail) {
+-	    syslog(LOG_WARNING, "%u elements failed, %u scripts failed",
++	    state->log(LOG_WARNING, "%u elements failed, %u scripts failed",
+ 		   state->pkgfail, state->scriptfail);
+ 	}
+-	syslog(LOG_NOTICE, "Transaction ID %x finished: %d",
++	state->log(LOG_NOTICE, "Transaction ID %x finished: %d",
+ 		rpmtsGetTid(ts), res);
+     }
+ 
+@@ -102,7 +131,7 @@ static rpmRC syslog_psm_post(rpmPlugin plugin, rpmte te, int res)
+ 	    state->pkgfail++;
+ 	}
+ 
+-	syslog(lvl, "%s %s: %s", op, pkg, outcome);
++	state->log(lvl, "%s %s: %s", op, pkg, outcome);
+     }
+     return RPMRC_OK;
+ }
+@@ -113,7 +142,7 @@ static rpmRC syslog_scriptlet_post(rpmPlugin plugin,
+     struct logstat * state = rpmPluginGetData(plugin);
+ 
+     if (state->logging && res) {
+-	syslog(LOG_WARNING, "scriptlet %s failure: %d\n", s_name, res);
++	state->log(LOG_WARNING, "scriptlet %s failure: %d\n", s_name, res);
+ 	state->scriptfail++;
+     }
+     return RPMRC_OK;
+-- 
+2.54.0
+
+
+From eb44ea8ebb305bf13208dac5512bd6e00c3087ee Mon Sep 17 00:00:00 2001
+From: Panu Matilainen <pmatilai@redhat.com>
+Date: Wed, 20 May 2026 16:37:13 +0300
+Subject: [PATCH 6/6] Report meaningful operation names in syslog output
+
+Determine and output human understandable operations, including the
+related transaction elements where relevant and explain it in the
+manual. Drop the comment about making things more configurable, that's
+not helpful to the community (except perhaps if the default is bad,
+as it originally was).
+
+Add tests now that we can actually test it.
+
+Related: RHEL-155272
+(backported from commit 98bcdb37397c23c6689ab64824875f4021a986ed)
+---
+ docs/man/rpm-plugin-syslog.8.md | 48 ++++++++++++++++
+ plugins/syslog.c                | 97 +++++++++++++++++++++++++++++----
+ 2 files changed, 134 insertions(+), 11 deletions(-)
+
+diff --git a/docs/man/rpm-plugin-syslog.8.md b/docs/man/rpm-plugin-syslog.8.md
+index 47a6bc549..08944c6b7 100644
+--- a/docs/man/rpm-plugin-syslog.8.md
++++ b/docs/man/rpm-plugin-syslog.8.md
+@@ -26,6 +26,54 @@ Configuration
+ 
+ See **rpm-plugins**(8) on how to control plugins in general.
+ 
++Output
++======
++
++The plugin uses **rpm** as its syslog identity.
++
++The package level output during transactions is as follows:
++
++_OPERATION_ _NEVRA_ [**(from:** _RELNEVRA_**)**]**:** _STATUS_
++
++_OPERATION_ is one of:
++
++- **cleanup**: cleanup of the previous version in **upgrade** or **downgrade**
++- **downgrade**: downgrade an installed package to an older version
++- **erase**: erase package from the system
++- **install**: install a new package on the system
++- **replace**: replace (obsolete) a previously installed package with another one
++- **restore**: restore permissions and similar on an installed package
++- **upgrade**: upgrade an installed package to a newer version
++
++_NEVRA_ identifies the transaction element being operated on.
++Note that operations **downgrade**, **replace** and **upgrade** consist of two
++elements: install of one package version and removal of another.
++In these cases, the related element identifier _RELNEVRA_ is indicated
++in parentheses after **from:**.  _STATUS_ is one of **success** or **failure**.
++
++Examples
++========
++
++**journalctl -t rpm**
++:   Inspect RPM transaction history on a systemd-based OS.
++
++**Package aaa upgrade from 1.2-1 to 2.0-1**
++```
++upgrade: aaa-2.0-1.noarch (from: aaa-1.2-1.noarch): success
++cleanup: aaa-1.2-1.noarch (from: aaa-2.0-1.noarch): success
++```
++
++**Package bbb 1.3-5 obsoleting aaa 1.2-1**
++```
++replace: bbb-1.3-5.noarch (from: aaa-1.2-1.noarch): success
++erase: aaa-1.2-1.noarch (from: bbb-1.3-5.noarch): success
++```
++
++**Package aaa 1.2-1 install failure**
++```
++install: aaa-1.2-1.noarch: failure
++```
++
+ SEE ALSO
+ ========
+ 
+diff --git a/plugins/syslog.c b/plugins/syslog.c
+index 5db295f4b..dbcc018db 100644
+--- a/plugins/syslog.c
++++ b/plugins/syslog.c
+@@ -6,6 +6,7 @@
+ 
+ #include <rpm/rpmlog.h>
+ #include <rpm/rpmmacro.h>
++#include <rpm/rpmver.h>
+ #include <rpm/rpmstring.h>
+ #include <rpm/rpmts.h>
+ #include "rpmplugin.h"
+@@ -16,6 +17,7 @@ struct logstat {
+     int logging;
+     unsigned int scriptfail;
+     unsigned int pkgfail;
++    rpmts ts;
+     loggerfunc log;
+ };
+ 
+@@ -31,7 +33,6 @@ static void errlog(int prio, const char *fmt, ...)
+ 
+ static rpmRC syslog_init(rpmPlugin plugin, rpmts ts)
+ {
+-    /* XXX make this configurable? */
+     const char * log_ident = "rpm";
+     struct logstat * state = rcalloc(1, sizeof(*state));
+     char *target = rpmExpand("%{?__transaction_syslog_target}", NULL);
+@@ -65,6 +66,7 @@ static rpmRC syslog_tsm_pre(rpmPlugin plugin, rpmts ts)
+     struct logstat * state = rpmPluginGetData(plugin);
+     
+     /* Reset counters */
++    state->ts = ts;
+     state->scriptfail = 0;
+     state->pkgfail = 0;
+ 
+@@ -103,15 +105,89 @@ static rpmRC syslog_tsm_post(rpmPlugin plugin, rpmts ts, int res)
+     return RPMRC_OK;
+ }
+ 
+-static const char *getOp(rpmte te)
++static rpmte findDependent(rpmts ts, rpmte te)
+ {
++    rpmte dep = NULL;
++    rpmte p = NULL;
++    rpmtsi pi = rpmtsiInit(ts);
++    while ((p = rpmtsiNext(pi, 0)) != NULL) {
++	if (rpmteDependsOn(p) == te) {
++	    dep = p;
++	    break;
++	}
++    }
++    rpmtsiFree(pi);
++
++    return dep;
++}
++
++static int isObsolete(rpmte a, rpmte b)
++{
++    return strcmp(rpmteN(a), rpmteN(b));
++}
++
++static int isDowngrade(rpmte a, rpmte b)
++{
++    int downgrade = 0;
++    rpmver av = rpmverParse(rpmteEVR(a));
++    rpmver bv = rpmverParse(rpmteEVR(b));
++
++    if (av && bv && rpmverCmp(av, bv) < 0)
++	downgrade = 1;
++
++    rpmverFree(av);
++    rpmverFree(bv);
++    return downgrade;
++}
++
++static char *getOp(rpmts ts, rpmte te)
++{
++    char *ret = NULL;
++    const char *op = NULL;
++    rpmte dep = NULL;
++
+     switch (rpmteType(te)) {
+-    case TR_ADDED:	return "install";
+-    case TR_REMOVED:	return "erase";
+-    case TR_RPMDB:	return "rpmdb";
+-    case TR_RESTORED:	return "restore";
++    case TR_ADDED:
++	dep = findDependent(ts, te);
++	if (dep) {
++	    if (isObsolete(te, dep)) {
++		op = "replace";
++	    } else {
++		op = isDowngrade(te, dep) ? "downgrade" : "upgrade";
++	    }
++	} else {
++	    op = "install";
++	}
++	break;
++    case TR_REMOVED:
++	dep = rpmteDependsOn(te);
++	if (dep && !isObsolete(te, dep)) {
++	    op = "cleanup";
++	} else {
++	    op = "erase";
++	}
++	break;
++    case TR_RPMDB:
++	/* not an operation */
++	break;
++    case TR_RESTORED:
++	op = "restore";
++	break;
++    default:
++	op = "<unknown>";
++	break;
+     }
+-    return "<unknown>";
++
++    if (op) {
++	if (dep) {
++	    rasprintf(&ret, "%s: %s (from: %s)", op,
++			rpmteNEVRA(te), rpmteNEVRA(dep));
++	} else {
++	    rasprintf(&ret, "%s: %s", op, rpmteNEVRA(te));
++	}
++    }
++
++    return ret;
+ }
+ 
+ static rpmRC syslog_psm_post(rpmPlugin plugin, rpmte te, int res)
+@@ -120,10 +196,8 @@ static rpmRC syslog_psm_post(rpmPlugin plugin, rpmte te, int res)
+ 
+     if (state->logging) {
+ 	int lvl = LOG_NOTICE;
+-	const char *op = getOp(te);
++	char *op = getOp(state->ts, te);
+ 	const char *outcome = "success";
+-	/* XXX: Permit configurable header queryformat? */
+-	const char *pkg = rpmteNEVRA(te);
+ 
+ 	if (res != RPMRC_OK) {
+ 	    lvl = LOG_WARNING;
+@@ -131,7 +205,8 @@ static rpmRC syslog_psm_post(rpmPlugin plugin, rpmte te, int res)
+ 	    state->pkgfail++;
+ 	}
+ 
+-	state->log(lvl, "%s %s: %s", op, pkg, outcome);
++	state->log(lvl, "%s: %s", op, outcome);
++	free(op);
+     }
+     return RPMRC_OK;
+ }
+-- 
+2.54.0
+
+diff -up rpm-4.19.1.1/docs/man/rpm-plugin-syslog.8.orig rpm-4.19.1.1/docs/man/rpm-plugin-syslog.8
+--- rpm-4.19.1.1/docs/man/rpm-plugin-syslog.8.orig	2026-06-18 09:26:45.106337957 +0200
++++ rpm-4.19.1.1/docs/man/rpm-plugin-syslog.8	2026-06-18 09:26:48.072321034 +0200
+@@ -1,32 +1,81 @@
+-.\" Automatically generated by Pandoc 3.1.3
++.\" Automatically generated by Pandoc 3.1.11.1
+ .\"
+-.\" Define V font for inline verbatim, using C font in formats
+-.\" that render this, and otherwise B font.
+-.ie "\f[CB]x\f[]"x" \{\
+-. ftr V B
+-. ftr VI BI
+-. ftr VB B
+-. ftr VBI BI
+-.\}
+-.el \{\
+-. ftr V CR
+-. ftr VI CI
+-. ftr VB CB
+-. ftr VBI CBI
+-.\}
+-.TH "RPM-SYSLOG" "8" "14 Apr 2016" "" ""
+-.hy
++.TH "RPM\-SYSLOG" "8" "14 Apr 2016" "" ""
+ .SH NAME
+-.PP
+-rpm-plugin-syslog - Syslog plugin for the RPM Package Manager
++rpm\-plugin\-syslog \- Syslog plugin for the RPM Package Manager
+ .SH Description
+-.PP
+ The plugin writes basic information about rpm transactions to the syslog
+-- like transactions run and packages installed or removed.
++\- like transactions run and packages installed or removed.
+ .SH Configuration
++.TP
++\f[B]%__transaction_syslog_target\f[R]
++Specify target output for the plugin.
++Supported values are:
++.RS
++.IP \[bu] 2
++\f[B]syslog\f[R]: system log (default)
++.IP \[bu] 2
++\f[B]stderr\f[R]: standard error
++.RE
+ .PP
+-There are currently no options for this plugin in particular.
+-See \f[B]rpm-plugins\f[R](8) on how to control plugins in general.
+-.SH SEE ALSO
++See \f[B]rpm\-plugins\f[R](8) on how to control plugins in general.
++.SH Output
++The plugin uses \f[B]rpm\f[R] as its syslog identity.
++.PP
++The package level output during transactions is as follows:
++.PP
++\f[I]OPERATION\f[R] \f[I]NEVRA\f[R] [\f[B](from:\f[R]
++\f[I]RELNEVRA\f[R]\f[B])\f[R]]\f[B]:\f[R] \f[I]STATUS\f[R]
+ .PP
+-\f[B]rpm\f[R](8), \f[B]rpm-plugins\f[R](8)
++\f[I]OPERATION\f[R] is one of:
++.IP \[bu] 2
++\f[B]cleanup\f[R]: cleanup of the previous version in \f[B]upgrade\f[R]
++or \f[B]downgrade\f[R]
++.IP \[bu] 2
++\f[B]downgrade\f[R]: downgrade an installed package to an older version
++.IP \[bu] 2
++\f[B]erase\f[R]: erase package from the system
++.IP \[bu] 2
++\f[B]install\f[R]: install a new package on the system
++.IP \[bu] 2
++\f[B]replace\f[R]: replace (obsolete) a previously installed package
++with another one
++.IP \[bu] 2
++\f[B]restore\f[R]: restore permissions and similar on an installed
++package
++.IP \[bu] 2
++\f[B]upgrade\f[R]: upgrade an installed package to a newer version
++.PP
++\f[I]NEVRA\f[R] identifies the transaction element being operated on.
++Note that operations \f[B]downgrade\f[R], \f[B]replace\f[R] and
++\f[B]upgrade\f[R] consist of two elements: install of one package
++version and removal of another.
++In these cases, the related element identifier \f[I]RELNEVRA\f[R] is
++indicated in parentheses after \f[B]from:\f[R].
++\f[I]STATUS\f[R] is one of \f[B]success\f[R] or \f[B]failure\f[R].
++.SH Examples
++.TP
++\f[B]journalctl \-t rpm\f[R]
++Inspect RPM transaction history on a systemd\-based OS.
++.PP
++\f[B]Package aaa upgrade from 1.2\-1 to 2.0\-1\f[R]
++.IP
++.EX
++upgrade: aaa\-2.0\-1.noarch (from: aaa\-1.2\-1.noarch): success
++cleanup: aaa\-1.2\-1.noarch (from: aaa\-2.0\-1.noarch): success
++.EE
++.PP
++\f[B]Package bbb 1.3\-5 obsoleting aaa 1.2\-1\f[R]
++.IP
++.EX
++replace: bbb\-1.3\-5.noarch (from: aaa\-1.2\-1.noarch): success
++erase: aaa\-1.2\-1.noarch (from: bbb\-1.3\-5.noarch): success
++.EE
++.PP
++\f[B]Package aaa 1.2\-1 install failure\f[R]
++.IP
++.EX
++install: aaa\-1.2\-1.noarch: failure
++.EE
++.SH SEE ALSO
++\f[B]rpm\f[R](8), \f[B]rpm\-plugins\f[R](8)

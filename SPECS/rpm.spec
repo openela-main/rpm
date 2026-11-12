@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.1.1
 #global snapver rc1
-%global baserelease 23
+%global baserelease 29
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -175,6 +175,25 @@ rpm-4.19.x-multisig-verify-fixes.patch
 rpm-4.19.x-nsswitch-enable.patch
 0001-Fix-empty-password-field-in-passwd-group-causing-ent.patch
 
+rpm-4.19.x-add-autosetup-C.patch
+rpm-4.19.x-add-parkdb.patch
+rpm-4.19.x-improve-syslog.patch
+0001-Prevent-buffer-overruns-in-findPreambleTag-for-langu.patch
+
+0001-Prevent-command-injection-via-rpmbuild-t.patch
+
+0001-Fix-missing-quotes-in-doUncompress.patch
+0002-Define-a-nicer-alias-for-the-archiveType-struct.patch
+0003-Split-out-archiver-and-singleroot-in-rpmuncompress.patch
+0004-Prevent-command-injection-via-rpmbuild-t-filename.patch
+0001-Prevent-macro-injection-via-.gem-filenames.patch
+0001-Add-a-variable-argument-list-to-rpopen.patch
+0002-Let-callers-pass-the-basename-to-doUntar.patch
+0003-Drop-leftover-filename-arg-from-doUncompress.patch
+0004-Rename-a-parameter-name-in-doUntar.patch
+0005-Prevent-shell-injection-via-RubyGem-filenames.patch
+0001-Fix-rpopen-rpclose-and-make-them-more-POSIXy.patch
+
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
 
@@ -193,7 +212,8 @@ Requires(meta): %{name} = %{version}-%{release}
 # >= 1.4.0 required for pgpVerifySignature2() and pgpPrtParams2()
 Requires: rpm-sequoia%{_isa} >= 1.9.0
 # Most systems should have a central package operations log
-Recommends: rpm-plugin-audit
+Requires(meta): (rpm-plugin-audit if audit)
+Requires(meta): (rpm-plugin-syslog if syslog)
 %endif
 
 %description libs
@@ -664,6 +684,30 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
+* Mon Nov 09 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-29
+- Fix rpopen()/rpclose() and make them more POSIXy (RHEL-288156)
+
+* Wed Oct 21 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-28
+- CVE-2026-84233: Prevent macro injection via .gem filenames (RHEL-288155)
+- CVE-2026-84837: Prevent command injection via rpmbuild -t filename (RHEL-288156)
+- CVE-2026-84838: Prevent command injection via rpmuncompress (RHEL-288158)
+
+* Fri Oct 16 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-27
+- Bump release for rebuild (RHEL-282742)
+
+* Mon Oct 12 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-26
+- CVE-2026-78367: Prevent command injection via rpmbuild -t (RHEL-282742)
+
+* Fri Jun 19 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-25
+- Apply forgotten patch for RHEL-169755
+
+* Thu Jun 18 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-24
+- Add support for %%autosetup -C (RHEL-141269)
+- Add support for database parking (RHEL-126405)
+- Make syslog plugin actually useful and also required (RHEL-155272)
+- Require rpm-plugin-audit instead of just recommending (RHEL-139071)
+- Fix buffer overruns with long language strings (RHEL-169755)
+
 * Thu Feb 05 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-23
 - Fix key import API to return NOTTRUSTED for disabled algorithms (RHEL-112394)
 

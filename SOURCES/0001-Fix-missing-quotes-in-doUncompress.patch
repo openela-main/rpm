@@ -1,0 +1,33 @@
+From 6486089ef52a3734aa81a833bfcb5ee367d52231 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Mon, 14 Sep 2026 16:58:04 +0200
+Subject: [PATCH 1/4] Fix missing quotes in doUncompress()
+
+Escape the filename in single quotes like we already do in doUntar(), to
+fix the default (non-extraction) mode of operation in rpmuncompress for
+filenames with spaces and/or metacharacters in them.
+
+Add a test, and adjust the existing ones that use --dry-run since the
+output now contains a quoted argument.
+
+(backported from commit 503f4c9fcafb1999b1d200613425087ef40ad548)
+---
+ tools/rpmuncompress.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/rpmuncompress.c b/tools/rpmuncompress.c
+index 7233e4bb9..245d86ed9 100644
+--- a/tools/rpmuncompress.c
++++ b/tools/rpmuncompress.c
+@@ -82,7 +82,7 @@ static char *doUncompress(const char *fn)
+ 	cmd = rpmExpand(at->setTZ ? "TZ=UTC " : "",
+ 			at->cmd, " ", at->unpack, NULL);
+ 	/* path must not be expanded */
+-	cmd = rstrscat(&cmd, " ", fn, NULL);
++	cmd = rstrscat(&cmd, " '", fn, "'", NULL);
+     }
+     return cmd;
+ }
+-- 
+2.56.0
+
