@@ -1,0 +1,187 @@
+From b51759c2ec195c3eaab2b0de0b7a60a4512a984e Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Mon, 7 Sep 2026 14:41:39 +0200
+Subject: [PATCH 2/3] Prevent command injection via rpmbuild -t filename
+
+Commit 2a11eb3e4e51094082e0123aebd797ec051dc094 fixed command injection
+via spec file entries, but there's another case where we pass some data
+controlled by the tarball through macro or shell expansion: the filename
+argument itself.
+
+This happens in three places during tarball decompression: the first two
+are in getTarSpec() where we construct and execute the shell command for
+spec file extraction using rpmExpand() and popen(3), respectively, which
+leads to the third one where we execute the actual decompression utility
+using popen(3) in rpmuncompress. The filename gets passed through all of
+these steps, and can cause arbitrary shell code execution in each one.
+
+Fix that by passing the filename as a positional argument when invoking
+the shell so that the command can reference it through the hardcoded $1
+parameter instead of the filename directly. Add our own popen(3) version
+for this purpose that takes an additional argument to be passed as $1 to
+the shell, to preserve the surrounding logic and keep the patch minimal.
+Hardcode /bin/sh as the shell since that's what popen(3) claims to do.
+
+Don't bother with write mode support like the original function, though,
+it can always be added later if this new version turns out to be useful
+elsewhere. Add also a pclose(3) equivalent, just for consistency, since
+the original call would probably work fine when passed the FILE stream
+created by us.
+
+Adjust the rpmuncompress output when in verbose/dry mode so that it is
+preserved exactly. That means, generate the shell command again but this
+time with the actual filename (enclosed in single quotes), and use that
+for printing. Note that this has to happen in *addition* to the default
+command that uses $1 since we need both variants when in verbose mode.
+
+Enable the tests added in the previous commit as they are now expected
+to pass.
+
+Long-term, a better solution would be to split the shell commands such
+that the simple program invocations that need the filename can be done
+with a plain fork-exec instead of popen(3), or better yet, to just port
+the internals to libarchive. But either is much more complex and would
+make the patch more difficult to backport, so let's just stick with the
+uglier fix for now.
+
+Fixes: CVE-2026-84837, CVE-2026-84838
+
+Backported from commit 7a4111bc5db4053e5381b65306903837763e7f11:
+
+- This codebase is only affected by CVE-2026-84837 (rpmbuild -ts), that
+  is, in the getTarSpec() function, since the rpmuncompress utility
+  isn't present yet.
+
+- Obtain the uncompress command line separately by using the newly added
+  rpmGetArchiver() function. This is needed in order to prevent the
+  macro injection flaw since the %{uncompress} macro also does the
+  detection (and thus requires an actual filename on disk to open),
+  unlike in the later versions where it merely expands to the
+  rpmuncompress path.
+
+- Log a warning (but don't fail) if the archiver couldn't be detected:
+  this would have previously generated an empty command when using the
+  %{uncompress} macro, so it's a nice bonus.
+---
+ cliutils.c | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
+ cliutils.h |  7 +++++++
+ rpmbuild.c | 12 +++++++++---
+ 3 files changed, 64 insertions(+), 3 deletions(-)
+
+diff --git a/cliutils.c b/cliutils.c
+index 772a105ec..2231ed1f1 100644
+--- a/cliutils.c
++++ b/cliutils.c
+@@ -86,3 +86,51 @@ int finishPipe(void)
+     }
+     return rc;
+ }
++
++FILE* rpopen(const char *cmd, const char *arg)
++{
++    FILE *stream = NULL;
++    ARGV_t argv = NULL;
++    int pipefd[2];
++    pid_t pid;
++
++    if (pipe(pipefd) < 0)
++	goto exit;
++
++    argvAdd(&argv, "/bin/sh");
++    argvAdd(&argv, "-c");
++    argvAdd(&argv, cmd);
++    argvAdd(&argv, "sh");
++    argvAdd(&argv, arg);
++
++    if ((pid = fork()) == 0) {
++	dup2(pipefd[1], STDOUT_FILENO);
++	close(pipefd[0]);
++	execv(argv[0], argv);
++	_exit(EXIT_FAILURE);
++    } else if (pid == -1) {
++	goto exit;
++    }
++
++    close(pipefd[1]);
++    stream = fdopen(pipefd[0], "r");
++
++exit:
++    argvFree(argv);
++    return stream;
++}
++
++int rpclose(FILE *stream)
++{
++    int rc = -1;
++    int status;
++
++    if ((waitpid(-1, &status, 0) == -1) || !WIFEXITED(status))
++	goto exit;
++
++    rc = WEXITSTATUS(status);
++
++exit:
++    fclose(stream);
++    return rc;
++}
+diff --git a/cliutils.h b/cliutils.h
+index b5deee1ba..cda4bebdf 100644
+--- a/cliutils.h
++++ b/cliutils.h
+@@ -22,4 +22,11 @@ int initPipe(void);
+ 
+ int finishPipe(void);
+ 
++/*
++ * A safe, read-only variant of popen(3) that passes untrusted input (arg) as a
++ * positional argument to sh(1) where the command (cmd) can read it via $1.
++ */
++FILE *rpopen(const char *cmd, const char *arg);
++int rpclose(FILE *stream);
++
+ #endif /* _CLIUTIL_H */
+diff --git a/rpmbuild.c b/rpmbuild.c
+index 8dbd06d5f..ddc1e0750 100644
+--- a/rpmbuild.c
++++ b/rpmbuild.c
+@@ -15,6 +15,7 @@
+ #include "lib/signature.h"
+ #include "cliutils.h"
+ 
++#include "rpmio/rpmmacro_internal.h"
+ #include "debug.h"
+ 
+ static struct rpmBuildArguments_s rpmBTArgs;
+@@ -353,13 +354,18 @@ static char * getTarSpec(const char *arg)
+     for (spec = tryspec; *spec != NULL; spec++) {
+ 	FILE *fp;
+ 	char *cmd;
++	const char *uncmd = NULL;
+ 	int specfiles = 0;
+ 
+-	cmd = rpmExpand("%{uncompress: ", arg, "} | ",
++	if (rpmGetArchiver(arg, &uncmd))
++	    rpmlog(RPMLOG_WARNING,
++		    _("Failed to detect archive type: %s\n"), arg);
++
++	cmd = rpmExpand(uncmd, "\"$1\" | ",
+ 			"%{__tar} xOvof - --wildcards ", *spec,
+ 			" 2>&1 > ", specFile, NULL);
+ 
+-	if (!(fp = popen(cmd, "r"))) {
++	if (!(fp = rpopen(cmd, arg))) {
+ 	    rpmlog(RPMLOG_ERR, _("Failed to open tar pipe: %m\n"));
+ 	} else {
+ 	    char *fok;
+@@ -372,7 +378,7 @@ static char * getTarSpec(const char *arg)
+ 		}
+ 		specfiles++;
+ 	    }
+-	    pclose(fp);
++	    rpclose(fp);
+ 	    gotspec = (specfiles == 1) && isSpecFile(specFile);
+ 	    if (specfiles > 1) {
+ 		rpmlog(RPMLOG_ERR, _("Found more than one spec file in %s\n"), arg);
+-- 
+2.56.0
+

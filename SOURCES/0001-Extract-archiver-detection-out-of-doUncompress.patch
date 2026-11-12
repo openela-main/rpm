@@ -1,0 +1,143 @@
+From 7aabd4c44b5cf015ac3854cc16fc23e23a87f224 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Fri, 23 Oct 2026 14:01:04 +0200
+Subject: [PATCH 1/3] Extract archiver detection out of doUncompress()
+
+Move the logic to determine the command line string to an internal macro
+API function called rpmGetArchiver(). This will be needed in the
+subsequent commit.
+
+No functional change.
+---
+ rpmio/macro.c             | 82 +++++++++++++++++++++++----------------
+ rpmio/rpmmacro_internal.h |  8 ++++
+ 2 files changed, 57 insertions(+), 33 deletions(-)
+
+diff --git a/rpmio/macro.c b/rpmio/macro.c
+index 490bf9a6a..6eef3cd2f 100644
+--- a/rpmio/macro.c
++++ b/rpmio/macro.c
+@@ -1107,7 +1107,7 @@ doSP(MacroBuf mb, int chkexist, int negate,
+ static void doUncompress(MacroBuf mb, int chkexist, int negate,
+ 		const char * f, size_t fn, const char * g, size_t gn)
+ {
+-    rpmCompressedMagic compressed = COMPRESSED_OTHER;
++    const char *cmd = NULL;
+     char *b, *be, *buf = NULL;
+     int c;
+ 
+@@ -1123,40 +1123,10 @@ static void doUncompress(MacroBuf mb, int chkexist, int negate,
+     if (gn == 0 || *b == '\0')
+ 	goto exit;
+ 
+-    if (rpmFileIsCompressed(b, &compressed))
++    if (rpmGetArchiver(b, &cmd))
+ 	mb->error = 1;
+ 
+-    switch (compressed) {
+-    default:
+-    case COMPRESSED_NOT:
+-	expandMacro(mb, "%__cat ", 0);
+-	break;
+-    case COMPRESSED_OTHER:
+-	expandMacro(mb, "%__gzip -dc ", 0);
+-	break;
+-    case COMPRESSED_BZIP2:
+-	expandMacro(mb, "%__bzip2 -dc ", 0);
+-	break;
+-    case COMPRESSED_ZIP:
+-	expandMacro(mb, "%__unzip ", 0);
+-	break;
+-    case COMPRESSED_LZMA:
+-    case COMPRESSED_XZ:
+-	expandMacro(mb, "%__xz -dc ", 0);
+-	break;
+-    case COMPRESSED_LZIP:
+-	expandMacro(mb, "%__lzip -dc ", 0);
+-	break;
+-    case COMPRESSED_LRZIP:
+-	expandMacro(mb, "%__lrzip -dqo- ", 0);
+-	break;
+-    case COMPRESSED_7ZIP:
+-	expandMacro(mb, "%__7zip x ", 0);
+-	break;
+-    case COMPRESSED_ZSTD:
+-	expandMacro(mb, "%__zstd -dc ", 0);
+-	break;
+-    }
++    expandMacro(mb, cmd, 0);
+     mbAppendStr(mb, buf);
+ 
+ exit:
+@@ -2004,3 +1974,49 @@ rpmExpandNumeric(const char *arg)
+ 
+     return rc;
+ }
++
++int
++rpmGetArchiver(const char *fn, const char **cmd)
++{
++    int rc = 0;
++    rpmCompressedMagic compressed = COMPRESSED_OTHER;
++    const char *s = NULL;
++
++    if (rpmFileIsCompressed(fn, &compressed))
++	rc = 1;
++
++    switch (compressed) {
++    default:
++    case COMPRESSED_NOT:
++	s = "%__cat ";
++	break;
++    case COMPRESSED_OTHER:
++	s = "%__gzip -dc ";
++	break;
++    case COMPRESSED_BZIP2:
++	s = "%__bzip2 -dc ";
++	break;
++    case COMPRESSED_ZIP:
++	s = "%__unzip ";
++	break;
++    case COMPRESSED_LZMA:
++    case COMPRESSED_XZ:
++	s = "%__xz -dc ";
++	break;
++    case COMPRESSED_LZIP:
++	s = "%__lzip -dc ";
++	break;
++    case COMPRESSED_LRZIP:
++	s = "%__lrzip -dqo- ";
++	break;
++    case COMPRESSED_7ZIP:
++	s = "%__7zip x ";
++	break;
++    case COMPRESSED_ZSTD:
++	s = "%__zstd -dc ";
++	break;
++    }
++
++    *cmd = s;
++    return rc;
++}
+diff --git a/rpmio/rpmmacro_internal.h b/rpmio/rpmmacro_internal.h
+index a59671be8..eca7511da 100644
+--- a/rpmio/rpmmacro_internal.h
++++ b/rpmio/rpmmacro_internal.h
+@@ -19,6 +19,14 @@ extern "C" {
+ RPM_GNUC_INTERNAL
+ const char *findMacroEnd(const char *str);
+ 
++/** \ingroup rpmmacro
++ * Return a command line (without fn) for extracting the archive fn.
++ * Always returns a command line, even on failure.
++ * @param fn		filename of the archive
++ * @retval cmd		command line (with a trailing space)
++ * @return		0 on success, 1 on failure
++ */
++int rpmGetArchiver(const char *fn, const char **cmd);
+ 
+ #ifdef __cplusplus
+ }
+-- 
+2.56.0
+

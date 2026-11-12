@@ -32,7 +32,7 @@
 
 %global rpmver 4.16.1.3
 #global snapver rc1
-%global rel 40
+%global rel 43
 %global sover 9
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -123,6 +123,11 @@ Patch154: 0003-Add-support-for-spec-local-file-attributes-and-gener.patch
 Patch155: 0001-Allow-an-optional-override-clock-for-deterministic-t.patch
 Patch156: 0001-Improve-error-handling-on-keystore-load.patch
 Patch157: 0001-Sort-files-before-passing-to-file-attribute-dependen.patch
+Patch158: 0001-Prevent-command-injection-via-rpmbuild-t.patch
+Patch159: 0001-Extract-archiver-detection-out-of-doUncompress.patch
+Patch160: 0002-Prevent-command-injection-via-rpmbuild-t-filename.patch
+Patch161: 0003-Add-a-variable-argument-list-to-rpopen.patch
+Patch162: 0001-Fix-rpopen-rpclose-and-make-them-more-POSIXy.patch
 
 # These are not yet upstream
 Patch906: rpm-4.7.1-geode-i686.patch
@@ -675,6 +680,15 @@ fi
 %doc doc/librpm/html/*
 
 %changelog
+* Mon Nov 09 2026 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-43
+- Fix rpopen()/rpclose() and make them more POSIXy (RHEL-288157)
+
+* Mon Oct 26 2026 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-42
+- CVE-2026-84837: Prevent command injection via rpmbuild -t filename (RHEL-288157)
+
+* Tue Oct 13 2026 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-41
+- CVE-2026-78367: Prevent command injection via rpmbuild -t (RHEL-282745)
+
 * Fri Nov 21 2025 Michal Domonkos <mdomonko@redhat.com> - 4.16.1.3-40
 - Improve error handling on keystore load (RHEL-114837)
 - Sort files before passing to file attr dependency generators (RHEL-95376)
