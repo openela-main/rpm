@@ -27,7 +27,7 @@
 
 %global rpmver 4.19.1.1
 #global snapver rc1
-%global baserelease 29
+%global baserelease 25
 %global sover 10
 
 %global srcver %{rpmver}%{?snapver:-%{snapver}}
@@ -179,20 +179,6 @@ rpm-4.19.x-add-autosetup-C.patch
 rpm-4.19.x-add-parkdb.patch
 rpm-4.19.x-improve-syslog.patch
 0001-Prevent-buffer-overruns-in-findPreambleTag-for-langu.patch
-
-0001-Prevent-command-injection-via-rpmbuild-t.patch
-
-0001-Fix-missing-quotes-in-doUncompress.patch
-0002-Define-a-nicer-alias-for-the-archiveType-struct.patch
-0003-Split-out-archiver-and-singleroot-in-rpmuncompress.patch
-0004-Prevent-command-injection-via-rpmbuild-t-filename.patch
-0001-Prevent-macro-injection-via-.gem-filenames.patch
-0001-Add-a-variable-argument-list-to-rpopen.patch
-0002-Let-callers-pass-the-basename-to-doUntar.patch
-0003-Drop-leftover-filename-arg-from-doUncompress.patch
-0004-Rename-a-parameter-name-in-doUntar.patch
-0005-Prevent-shell-injection-via-RubyGem-filenames.patch
-0001-Fix-rpopen-rpclose-and-make-them-more-POSIXy.patch
 
 # These are not yet upstream
 rpm-4.7.1-geode-i686.patch
@@ -684,20 +670,6 @@ fi
 %doc %{_defaultdocdir}/rpm/API/
 
 %changelog
-* Mon Nov 09 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-29
-- Fix rpopen()/rpclose() and make them more POSIXy (RHEL-288156)
-
-* Wed Oct 21 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-28
-- CVE-2026-84233: Prevent macro injection via .gem filenames (RHEL-288155)
-- CVE-2026-84837: Prevent command injection via rpmbuild -t filename (RHEL-288156)
-- CVE-2026-84838: Prevent command injection via rpmuncompress (RHEL-288158)
-
-* Fri Oct 16 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-27
-- Bump release for rebuild (RHEL-282742)
-
-* Mon Oct 12 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-26
-- CVE-2026-78367: Prevent command injection via rpmbuild -t (RHEL-282742)
-
 * Fri Jun 19 2026 Michal Domonkos <mdomonko@redhat.com> - 4.19.1.1-25
 - Apply forgotten patch for RHEL-169755
 
