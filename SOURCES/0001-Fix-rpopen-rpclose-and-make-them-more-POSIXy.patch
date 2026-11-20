@@ -1,0 +1,153 @@
+From b06abe93021671c34b74bf7fd0804bd3ff694cd4 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Tue, 3 Nov 2026 08:48:11 +0100
+Subject: [PATCH] Fix rpopen()/rpclose() and make them more POSIXy
+
+Commit 7a4111bc5db4053e5381b65306903837763e7f11 introduced this new pair
+of drop-in replacements for popen()/pclose() but did so somewhat poorly.
+Apart from obvious bugs, there are various less obvious issues that make
+the functions ever so slightly not POSIX conforming. We are not shipping
+them in a generic library, obviously, but the internal callers that used
+to call the original functions could, at least in theory, be affected in
+some unexpected ways and cause regressions.
+
+Namely, the following issues were found:
+
+- rpclose() returned the extracted exit status from the child instead of
+  the original status from waitpid(2), which caused a child exit status
+  of 128 to be considered a "success" in rpmuncompress, oops
+- rpclose() waited on any child, not just the one spawned with rpopen()
+- EINTR wasn't ignored while busy waiting in rpclose()
+- pipe ends weren't always closed in case of failures
+- rpclose() only closed the stream after waiting on the child
+- the child didn't return 127 if the shell couldn't be invoked
+- the shell command didn't use -- to signal the end of options
+
+Fix the issues, and while at it, name the FILE pointer "fp" rather than
+"stream" and use do-while rather than while, for better consistency with
+the existing code as well as readability. Also do some refactoring there
+and add a couple of comments.
+
+Related: CVE-2026-84837, CVE-2026-84838
+Fixes: #4385
+(cherry picked from commit b9127abde15ec1a5d936891f7d5f78ddc5b689ff)
+---
+ cliutils.c | 58 ++++++++++++++++++++++++++++++++----------------------
+ cliutils.h |  2 +-
+ 2 files changed, 36 insertions(+), 24 deletions(-)
+
+diff --git a/cliutils.c b/cliutils.c
+index 6547e7bdb..5edb9fea7 100644
+--- a/cliutils.c
++++ b/cliutils.c
+@@ -14,6 +14,7 @@
+ #include "debug.h"
+ 
+ static pid_t pipeChild = 0;
++static pid_t rpopenChild = 0;
+ 
+ RPM_GNUC_NORETURN
+ void argerror(const char * desc)
+@@ -89,53 +90,64 @@ int finishPipe(void)
+ 
+ FILE* rpopen(const char *cmd, const char *arg, ...)
+ {
+-    FILE *stream = NULL;
++    FILE *fp = NULL;
++    int pipefd[2];
+     ARGV_t argv = NULL;
+     va_list ap;
+-    int pipefd[2];
+-    pid_t pid;
+ 
+     if (pipe(pipefd) < 0)
+-	goto exit;
++	return NULL;
++
++    if ((fp = fdopen(pipefd[0], "r")) == NULL) {
++	close(pipefd[0]);
++	close(pipefd[1]);
++	return NULL;
++    }
+ 
+     argvAdd(&argv, "/bin/sh");
+     argvAdd(&argv, "-c");
+-    argvAdd(&argv, cmd);
+-    argvAdd(&argv, "sh");
++    argvAdd(&argv, "--");
++    argvAdd(&argv, cmd);    /* User command */
++    argvAdd(&argv, "sh");   /* Shell name ($0) */
+ 
++    /* User positional parameters ($1, $2, ...) */
+     va_start(ap, arg);
+     for (const char *s = arg; s != NULL; s = va_arg(ap, const char *))
+ 	argvAdd(&argv, s);
+     va_end(ap);
+ 
+-    if ((pid = fork()) == 0) {
++    if ((rpopenChild = fork()) == 0) {
+ 	dup2(pipefd[1], STDOUT_FILENO);
++	close(pipefd[1]);
+ 	close(pipefd[0]);
+ 	execv(argv[0], argv);
+-	_exit(EXIT_FAILURE);
+-    } else if (pid == -1) {
+-	goto exit;
++	_exit(127);
++    } else if (rpopenChild == -1) {
++	fclose(fp);
++	fp = NULL;
+     }
+ 
+     close(pipefd[1]);
+-    stream = fdopen(pipefd[0], "r");
+-
+-exit:
+     argvFree(argv);
+-    return stream;
++
++    return fp;
+ }
+ 
+-int rpclose(FILE *stream)
++int rpclose(FILE *fp)
+ {
+-    int rc = -1;
+-    int status;
++    int status = -1;
++    pid_t reaped;
+ 
+-    if ((waitpid(-1, &status, 0) == -1) || !WIFEXITED(status))
+-	goto exit;
++    if (rpopenChild <= 0)
++	return -1;
+ 
+-    rc = WEXITSTATUS(status);
++    fclose(fp);
++    do {
++	reaped = waitpid(rpopenChild, &status, 0);
++    } while (reaped == -1 && errno == EINTR);
+ 
+-exit:
+-    fclose(stream);
+-    return rc;
++    if (reaped == -1)
++	return -1;
++
++    return status;
+ }
+diff --git a/cliutils.h b/cliutils.h
+index 4aee1ae72..600ccfa95 100644
+--- a/cliutils.h
++++ b/cliutils.h
+@@ -28,6 +28,6 @@ int finishPipe(void);
+  * $2, and so on.
+  */
+ FILE *rpopen(const char *cmd, const char *arg, ...) RPM_GNUC_NULL_TERMINATED;
+-int rpclose(FILE *stream);
++int rpclose(FILE *fp);
+ 
+ #endif /* _CLIUTIL_H */
+-- 
+2.56.0
+

@@ -32,7 +32,7 @@
 
 %global rpmver 4.14.3
 #global snapver rc2
-%global rel 32
+%global rel 34
 
 %global srcver %{version}%{?snapver:-%{snapver}}
 %global srcdir %{?snapver:testing}%{!?snapver:%{name}-%(echo %{version} | cut -d'.' -f1-2).x}
@@ -146,6 +146,11 @@ Patch511: 0002-Fix-IMA-signature-fubar-take-III-1833-RhBug-2018937.patch
 Patch512: 0003-Fix-root-relocation-regression.patch
 Patch513: 0004-Report-unsafe-symlinks-during-installation-as-a-spec.patch
 Patch514: 0005-Fix-FA_TOUCH-ed-files-getting-removed-on-failed-upda.patch
+Patch515: 0001-Prevent-command-injection-via-rpmbuild-t.patch
+Patch516: 0001-Extract-archiver-detection-out-of-doUncompress.patch
+Patch517: 0002-Prevent-command-injection-via-rpmbuild-t-filename.patch
+Patch518: 0003-Add-a-variable-argument-list-to-rpopen.patch
+Patch519: 0001-Fix-rpopen-rpclose-and-make-them-more-POSIXy.patch
 
 # These are not yet upstream
 # Audit support
@@ -716,6 +721,13 @@ make check || cat tests/rpmtests.log
 %doc doc/librpm/html/*
 
 %changelog
+* Mon Nov 09 2026 Michal Domonkos <mdomonko@redhat.com> - 4.14.3-34
+- CVE-2026-84837: Prevent command injection via rpmbuild -t filename (RHEL-253135)
+- Fix rpopen()/rpclose() and make them more POSIXy (RHEL-253135)
+
+* Thu Oct 15 2026 Michal Domonkos <mdomonko@redhat.com> - 4.14.3-33
+- CVE-2026-78367: Prevent command injection via rpmbuild -t (RHEL-247307)
+
 * Mon Oct 21 2024 Michal Domonkos <mdomonko@redhat.com> - 4.14.3-32
 - Fix FA_TOUCH'ed files getting removed on failed update (RHEL-63069)
 - Fix IMA signature lengths assumed constant (RHEL-39896)

@@ -1,0 +1,43 @@
+From c186658501fc592cb35278d144e1a7a93c7ce5b7 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Wed, 26 Aug 2026 10:53:12 +0200
+Subject: [PATCH] Prevent command injection via rpmbuild -t
+
+When running in -t mode, the spec member name in the passed tarball will
+get macro-expanded twice: first when constructing the target filename in
+getTarSpec() and then in parseSpec(). This allows a crafted tarball to
+execute arbitrary code when the user just runs rpmbuild -ts or similar.
+
+Luckily, neither of these expansions is necessary, they are only done as
+a convenience and/or historical artifact. The former in getTarSpec() was
+only added recently via commit dfffedb5ebe46e039c0313b3d2fb939dfc63efd6
+and can easily be split into a basename(3) call so that the member name
+is not included in the expansion, effectively reverting that part of the
+original commit. The latter seems to be only used as a way to normalize
+the spec filename stored in the rpmSpec struct and can be replaced by a
+mere rpmCleanPath().
+
+Make both changes, and add a corresponding test, too.
+
+Fixes: CVE-2026-78367, #4314
+(backported from commit 2a11eb3e4e51094082e0123aebd797ec051dc094)
+---
+ build/parseSpec.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/build/parseSpec.c b/build/parseSpec.c
+index 51f7ee275..f842e1b54 100644
+--- a/build/parseSpec.c
++++ b/build/parseSpec.c
+@@ -763,7 +763,7 @@ static rpmSpec parseSpec(const char *specFile, rpmSpecFlags flags,
+     /* Set up a new Spec structure with no packages. */
+     spec = newSpec();
+ 
+-    spec->specFile = rpmGetPath(specFile, NULL);
++    spec->specFile = rpmCleanPath(xstrdup(specFile));
+     pushOFI(spec, spec->specFile);
+     /* If buildRoot not specified, use default %{buildroot} */
+     if (buildRoot) {
+-- 
+2.56.0
+

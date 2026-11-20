@@ -1,0 +1,82 @@
+From 5d440821598ebeca758c5c5f4f2dda88f04b9038 Mon Sep 17 00:00:00 2001
+From: Michal Domonkos <mdomonko@redhat.com>
+Date: Thu, 22 Oct 2026 09:11:51 +0200
+Subject: [PATCH 3/3] Add a variable argument list to rpopen()
+
+Accept multiple positional arguments for the shell instead of just one.
+This will be needed in the next commits.
+
+No functional change.
+
+Backported from commit e7a086a8e203f123fbd37ead9b52188d1302ce0e.
+---
+ cliutils.c | 9 +++++++--
+ cliutils.h | 7 ++++---
+ rpmbuild.c | 2 +-
+ 3 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/cliutils.c b/cliutils.c
+index 2231ed1f1..6547e7bdb 100644
+--- a/cliutils.c
++++ b/cliutils.c
+@@ -87,10 +87,11 @@ int finishPipe(void)
+     return rc;
+ }
+ 
+-FILE* rpopen(const char *cmd, const char *arg)
++FILE* rpopen(const char *cmd, const char *arg, ...)
+ {
+     FILE *stream = NULL;
+     ARGV_t argv = NULL;
++    va_list ap;
+     int pipefd[2];
+     pid_t pid;
+ 
+@@ -101,7 +102,11 @@ FILE* rpopen(const char *cmd, const char *arg)
+     argvAdd(&argv, "-c");
+     argvAdd(&argv, cmd);
+     argvAdd(&argv, "sh");
+-    argvAdd(&argv, arg);
++
++    va_start(ap, arg);
++    for (const char *s = arg; s != NULL; s = va_arg(ap, const char *))
++	argvAdd(&argv, s);
++    va_end(ap);
+ 
+     if ((pid = fork()) == 0) {
+ 	dup2(pipefd[1], STDOUT_FILENO);
+diff --git a/cliutils.h b/cliutils.h
+index cda4bebdf..4aee1ae72 100644
+--- a/cliutils.h
++++ b/cliutils.h
+@@ -23,10 +23,11 @@ int initPipe(void);
+ int finishPipe(void);
+ 
+ /*
+- * A safe, read-only variant of popen(3) that passes untrusted input (arg) as a
+- * positional argument to sh(1) where the command (cmd) can read it via $1.
++ * A safe, read-only variant of popen(3) that passes untrusted input (args) as
++ * positional arguments to sh(1) where the command (cmd) can read them via $1,
++ * $2, and so on.
+  */
+-FILE *rpopen(const char *cmd, const char *arg);
++FILE *rpopen(const char *cmd, const char *arg, ...) RPM_GNUC_NULL_TERMINATED;
+ int rpclose(FILE *stream);
+ 
+ #endif /* _CLIUTIL_H */
+diff --git a/rpmbuild.c b/rpmbuild.c
+index cf0e1d244..eaba37b85 100644
+--- a/rpmbuild.c
++++ b/rpmbuild.c
+@@ -362,7 +362,7 @@ static char * getTarSpec(const char *arg)
+ 			"%{__tar} xOvof - --wildcards ", *spec,
+ 			" 2>&1 > ", tmpSpecFile, NULL);
+ 
+-	if (!(fp = rpopen(cmd, arg))) {
++	if (!(fp = rpopen(cmd, arg, NULL))) {
+ 	    rpmlog(RPMLOG_ERR, _("Failed to open tar pipe: %m\n"));
+ 	} else {
+ 	    char *fok;
+-- 
+2.56.0
+
